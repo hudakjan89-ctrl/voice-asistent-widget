@@ -5,12 +5,16 @@ Main FastAPI server with WebSocket audio streaming pipeline.
 import asyncio
 import json
 import logging
+import sys
+import traceback
+import time
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import httpx
 from openai import AsyncOpenAI
 
@@ -42,12 +46,25 @@ from errors import (
 )
 from text_normalizer import normalize_text
 
-# Configure logging
+# Configure logging - DEBUG level for maximum visibility
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
+    stream=sys.stdout,
+    force=True
 )
+
+# Set all loggers to DEBUG
+logging.getLogger().setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+# Log startup
+logger.info("=" * 60)
+logger.info("VOICE ASSISTANT SERVER STARTING")
+logger.info("=" * 60)
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Working directory: {__file__}")
 
 # OpenRouter client (OpenAI compatible)
 openai_client = AsyncOpenAI(
@@ -86,14 +103,74 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# Request/Response logging middleware
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware to log all incoming requests and outgoing responses."""
+    
+    async def dispatch(self, request: Request, call_next):
+        # Log incoming request
+        start_time = time.time()
+        logger.info(f">>> REQUEST: {request.method} {request.url.path}")
+        logger.debug(f"    Headers: {dict(request.headers)}")
+        logger.debug(f"    Query params: {dict(request.query_params)}")
+        
+        try:
+            # Process request
+            response = await call_next(request)
+            
+            # Calculate processing time
+            process_time = time.time() - start_time
+            
+            # Log response
+            logger.info(f"<<< RESPONSE: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.3f}s")
+            
+            return response
+            
+        except Exception as e:
+            # Log error
+            process_time = time.time() - start_time
+            logger.error(f"!!! ERROR: {request.method} {request.url.path} - {type(e).__name__}: {e} - Time: {process_time:.3f}s")
+            logger.error(f"    Traceback:\n{traceback.format_exc()}")
+            raise
+
+
+# Add middleware
+app.add_middleware(RequestLoggingMiddleware)
+
 # Mount static files for client
-app.mount("/static", StaticFiles(directory="client"), name="static")
+try:
+    app.mount("/static", StaticFiles(directory="client"), name="static")
+    logger.info("Static files mounted from 'client' directory")
+except Exception as e:
+    logger.error(f"Failed to mount static files: {e}")
 
 
 @app.get("/")
 async def root():
     """Serve the test client."""
-    return FileResponse("client/index.html")
+    import os
+    
+    file_path = "client/index.html"
+    logger.debug(f"Serving root - looking for: {file_path}")
+    logger.debug(f"Current working directory: {os.getcwd()}")
+    logger.debug(f"File exists: {os.path.exists(file_path)}")
+    logger.debug(f"Directory listing of 'client': {os.listdir('client') if os.path.exists('client') else 'client dir not found'}")
+    
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        logger.error(f"Current directory contents: {os.listdir('.')}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "client/index.html not found",
+                "cwd": os.getcwd(),
+                "files": os.listdir("."),
+                "client_exists": os.path.exists("client")
+            }
+        )
+    
+    return FileResponse(file_path)
 
 
 @app.get("/health")
@@ -843,9 +920,10 @@ async def websocket_audio_endpoint(websocket: WebSocket):
 
 # Error handlers
 @app.exception_handler(VoiceAssistantError)
-async def voice_assistant_error_handler(request, exc: VoiceAssistantError):
+async def voice_assistant_error_handler(request: Request, exc: VoiceAssistantError):
     """Handle custom voice assistant errors."""
     logger.error(f"Voice assistant error: {exc.code} - {exc.message}")
+    logger.error(f"Request: {request.method} {request.url}")
     return JSONResponse(
         status_code=400,
         content=exc.to_dict()
@@ -853,25 +931,41 @@ async def voice_assistant_error_handler(request, exc: VoiceAssistantError):
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Handle unexpected errors."""
-    logger.error(f"Unhandled exception: {exc}")
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected errors with full traceback."""
+    # Get full traceback
+    tb_str = traceback.format_exc()
+    
+    # Log detailed error information
+    logger.error("=" * 60)
+    logger.error("UNHANDLED EXCEPTION - INTERNAL SERVER ERROR")
+    logger.error("=" * 60)
+    logger.error(f"Request: {request.method} {request.url}")
+    logger.error(f"Path: {request.url.path}")
+    logger.error(f"Headers: {dict(request.headers)}")
+    logger.error(f"Exception type: {type(exc).__name__}")
+    logger.error(f"Exception message: {exc}")
+    logger.error(f"Full traceback:\n{tb_str}")
+    logger.error("=" * 60)
+    
     return JSONResponse(
         status_code=500,
         content={
             "type": "error",
             "code": "INTERNAL_ERROR",
-            "message": "Internal server error"
+            "message": f"Internal server error: {type(exc).__name__}: {str(exc)}",
+            "traceback": tb_str
         }
     )
 
 
 if __name__ == "__main__":
     import uvicorn
+    logger.info("Starting server via __main__")
     uvicorn.run(
-        "server.main:app",
+        "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8080,
         reload=True,
-        log_level="info"
+        log_level="debug"
     )

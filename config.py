@@ -18,7 +18,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 
 
-from server.errors import ConfigurationError
+from errors import ConfigurationError
 
 
 def validate_api_keys() -> dict:

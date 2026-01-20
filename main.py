@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import httpx
 from openai import AsyncOpenAI
 
-from server.config import (
+from config import (
     DEEPGRAM_API_KEY,
     OPENROUTER_API_KEY,
     ELEVENLABS_API_KEY,
@@ -32,7 +32,7 @@ from server.config import (
     validate_api_keys,
     get_config_summary,
 )
-from server.errors import (
+from errors import (
     ConfigurationError,
     ServiceConnectionError,
     STTError,
@@ -40,7 +40,7 @@ from server.errors import (
     TTSError,
     VoiceAssistantError,
 )
-from server.text_normalizer import normalize_text
+from text_normalizer import normalize_text
 
 # Configure logging
 logging.basicConfig(

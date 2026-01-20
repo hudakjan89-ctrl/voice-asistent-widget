@@ -1,47 +1,5 @@
-# Git
+# Only ignore git and cache files
 .git
-.gitignore
-
-# Python cache
 __pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-*.so
-
-# Virtual environments
-venv/
-ENV/
-env/
-.venv/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Testing
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-
-# Docker (don't include docker files in image)
-Dockerfile
-docker-compose.yaml
-docker-compose.yml
-
-# DO NOT IGNORE these - they are needed:
-# !client/
-# !client/**
-# !*.py
-# !requirements.txt
+*.pyc
+.env

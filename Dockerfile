@@ -19,23 +19,17 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all Python files explicitly
+# Copy Python files
 COPY main.py .
 COPY config.py .
 COPY errors.py .
 COPY text_normalizer.py .
 
-# Copy client folder explicitly
-COPY client/ ./client/
+# Copy client folder - EXPLICIT PATH
+COPY ./client /app/client
 
-# Verify client folder contents
-RUN echo "=== Verifying client folder ===" && \
-    ls -la /app/client/ && \
-    echo "=== client/index.html exists: ===" && \
-    cat /app/client/index.html | head -20
-
-# List all files for debugging
-RUN echo "=== All files in /app ===" && ls -la /app
+# Verify client folder - MUST show index.html
+RUN ls -la /app/client
 
 # Verify module can be imported
 RUN python -c "import main; print('Module import OK')"
@@ -47,5 +41,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
 
-# Run the application with debug logging
+# Run the application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "debug"]

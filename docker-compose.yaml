@@ -13,10 +13,6 @@ services:
     mem_limit: 2048m
     mem_reservation: 512m
     restart: always
-    volumes:
-      # Mount for development (remove in production)
-      - ./server:/app/server:ro
-      - ./client:/app/client:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s

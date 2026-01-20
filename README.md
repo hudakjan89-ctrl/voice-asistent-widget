@@ -25,7 +25,6 @@ Hlasový AI asistent s odozvou pod 1 sekundu. Backend pre real-time konverzáciu
 ### 1. Konfigurácia
 
 ```bash
-cd app
 cp .env.example .env
 ```
 

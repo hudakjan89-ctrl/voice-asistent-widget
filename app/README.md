@@ -72,7 +72,8 @@ Hlavný endpoint pre audio streaming.
 {"type": "assistant_text", "text": "...", "is_final": true/false}
 {"type": "clear_audio"}  // Barge-in - vymazať audio buffer
 {"type": "audio_end"}
-{"type": "error", "message": "..."}
+{"type": "session_timeout", "message": "..."}  // Ukončenie kvôli neaktivite
+{"type": "error", "code": "...", "message": "..."}
 ```
 
 **JSON správy pre server:**
@@ -85,7 +86,41 @@ Hlavný endpoint pre audio streaming.
 ### HTTP Endpoints
 
 - `GET /` - Testovací klient
-- `GET /health` - Health check
+- `GET /health` - Základný health check
+- `GET /health/detailed` - Detailný health check s testovaním externých služieb
+
+### Health Check Response
+
+**Základný (`/health`):**
+```json
+{
+  "status": "healthy",
+  "service": "voice-assistant",
+  "config": {
+    "llm_model": "anthropic/claude-3.5-haiku",
+    "deepgram_model": "nova-2-general",
+    "deepgram_language": "cs",
+    "api_keys_configured": {
+      "deepgram": true,
+      "openrouter": true,
+      "elevenlabs": true
+    }
+  }
+}
+```
+
+**Detailný (`/health/detailed`):**
+```json
+{
+  "status": "healthy",
+  "service": "voice-assistant",
+  "checks": {
+    "deepgram": {"status": "ok", "reachable": true, "authenticated": true},
+    "openrouter": {"status": "ok", "reachable": true, "authenticated": true},
+    "elevenlabs": {"status": "ok", "reachable": true, "authenticated": true}
+  }
+}
+```
 
 ## Architektúra
 
@@ -125,6 +160,15 @@ Obsahuje placeholder pre kontext firmy (až A4 textu).
 - **Odporúčaná odozva:** < 1 sekunda
 - **Audio formát:** PCM 16-bit, 16kHz, mono (vstup)
 - **Audio formát:** MP3 (výstup od ElevenLabs)
+- **Timeout neaktivity:** 5 minút (konfigurovateľné cez `SESSION_INACTIVITY_TIMEOUT`)
+- **História konverzácie:** max 20 správ (konfigurovateľné cez `MAX_CONVERSATION_HISTORY`)
+
+## Funkcie reliability
+
+- **Auto-reconnect:** Automatické znovupripojenie k Deepgram pri výpadku (max 3 pokusy)
+- **Session timeout:** Automatické ukončenie neaktívnych relácií
+- **API validácia:** Kontrola API kľúčov pri štarte servera
+- **Health checks:** Detailné health check endpointy pre monitoring
 
 ## Riešenie problémov
 

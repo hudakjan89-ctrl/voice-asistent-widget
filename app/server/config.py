@@ -3,7 +3,11 @@ Configuration module for Voice Assistant.
 Loads environment variables and provides configuration constants.
 """
 import os
+import logging
 from dotenv import load_dotenv
+
+# Configure module logger
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -12,6 +16,54 @@ load_dotenv()
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+
+
+from server.errors import ConfigurationError
+
+
+def validate_api_keys() -> dict:
+    """
+    Validate that all required API keys are configured.
+    Returns a dict with validation results for each service.
+    Raises ConfigurationError if critical keys are missing.
+    """
+    results = {
+        "deepgram": {"configured": bool(DEEPGRAM_API_KEY), "service": "STT"},
+        "openrouter": {"configured": bool(OPENROUTER_API_KEY), "service": "LLM"},
+        "elevenlabs": {"configured": bool(ELEVENLABS_API_KEY), "service": "TTS"},
+    }
+    
+    missing = []
+    for key, info in results.items():
+        if not info["configured"]:
+            missing.append(f"{key.upper()}_API_KEY ({info['service']})")
+            logger.warning(f"Missing API key: {key.upper()}_API_KEY for {info['service']}")
+    
+    if missing:
+        error_msg = f"Missing required API keys: {', '.join(missing)}"
+        logger.error(error_msg)
+        raise ConfigurationError(error_msg)
+    
+    logger.info("All API keys validated successfully")
+    return results
+
+
+def get_config_summary() -> dict:
+    """Return a summary of current configuration (without sensitive data)."""
+    return {
+        "llm_model": LLM_MODEL,
+        "deepgram_model": DEEPGRAM_MODEL,
+        "deepgram_language": DEEPGRAM_LANGUAGE,
+        "elevenlabs_voice_id": ELEVENLABS_VOICE_ID,
+        "elevenlabs_model": ELEVENLABS_MODEL,
+        "host": HOST,
+        "port": PORT,
+        "api_keys_configured": {
+            "deepgram": bool(DEEPGRAM_API_KEY),
+            "openrouter": bool(OPENROUTER_API_KEY),
+            "elevenlabs": bool(ELEVENLABS_API_KEY),
+        }
+    }
 
 # LLM Configuration
 LLM_MODEL = os.getenv("LLM_MODEL", "anthropic/claude-3.5-haiku")
@@ -33,6 +85,10 @@ PORT = int(os.getenv("PORT", "8000"))
 # Audio Configuration
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 1
+
+# Session Configuration
+SESSION_INACTIVITY_TIMEOUT = int(os.getenv("SESSION_INACTIVITY_TIMEOUT", "300"))  # 5 minutes
+MAX_CONVERSATION_HISTORY = int(os.getenv("MAX_CONVERSATION_HISTORY", "20"))  # Max messages to keep
 
 # System Prompt Template (Placeholder for A4 text)
 SYSTEM_PROMPT_TEMPLATE = """

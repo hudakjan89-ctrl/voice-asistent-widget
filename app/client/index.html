@@ -606,6 +606,19 @@
                     log('Audio stream ended');
                     setStatus('listening', 'Poslouchám...');
                     break;
+                
+                case 'session_timeout':
+                    log('Session timed out due to inactivity', 'error');
+                    setStatus('', 'Časový limit - odpojeno');
+                    stop();
+                    // Add timeout message to transcript
+                    const timeoutMsg = document.createElement('div');
+                    timeoutMsg.className = 'message';
+                    timeoutMsg.style.color = 'rgba(255,150,150,0.8)';
+                    timeoutMsg.style.fontStyle = 'italic';
+                    timeoutMsg.innerHTML = '<div class="message-label">Systém:</div>Relace byla ukončena kvůli neaktivitě.';
+                    transcriptContent.appendChild(timeoutMsg);
+                    break;
                     
                 case 'error':
                     log(`Server error: ${message.message}`, 'error');

@@ -30,7 +30,7 @@ COPY text_normalizer.py .
 RUN mkdir -p /app/client
 
 # Copy client folder contents explicitly
-COPY client/index.html /app/client/index.html
+COPY ./client /app/client/
 
 # Verify client folder and index.html - FAIL BUILD if not present
 RUN echo "=== Verifying client files ===" && \

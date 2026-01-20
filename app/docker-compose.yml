@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  voice-assistant:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voice-assistant-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    mem_limit: 2048m
+    mem_reservation: 512m
+    restart: always
+    volumes:
+      # Mount for development (remove in production)
+      - ./server:/app/server:ro
+      - ./client:/app/client:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

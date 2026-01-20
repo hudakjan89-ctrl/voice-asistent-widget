@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Assistant - Test Client</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 24px;
+            padding: 40px;
+            width: 100%;
+            max-width: 600px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        h1 {
+            color: #fff;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            color: rgba(255, 255, 255, 0.6);
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 30px;
+            padding: 12px 20px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #666;
+            transition: all 0.3s ease;
+        }
+
+        .status-indicator.connected {
+            background: #4ade80;
+            box-shadow: 0 0 10px #4ade80;
+        }
+
+        .status-indicator.listening {
+            background: #60a5fa;
+            box-shadow: 0 0 10px #60a5fa;
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-indicator.speaking {
+            background: #f472b6;
+            box-shadow: 0 0 10px #f472b6;
+            animation: pulse 0.8s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.1); }
+        }
+
+        .status-text {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+        }
+
+        .button-container {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        .start-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 18px 50px;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        .start-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.5);
+        }
+
+        .start-button:active {
+            transform: translateY(0);
+        }
+
+        .start-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .start-button.active {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            box-shadow: 0 10px 30px rgba(239, 68, 68, 0.4);
+        }
+
+        .transcript-container {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .transcript-label {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .transcript-content {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 16px;
+            line-height: 1.6;
+            min-height: 60px;
+        }
+
+        .transcript-content .user-text {
+            color: #60a5fa;
+        }
+
+        .transcript-content .assistant-text {
+            color: #4ade80;
+        }
+
+        .transcript-content .interim {
+            opacity: 0.6;
+            font-style: italic;
+        }
+
+        .message {
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            border-radius: 8px;
+        }
+
+        .message.user {
+            background: rgba(96, 165, 250, 0.1);
+            border-left: 3px solid #60a5fa;
+        }
+
+        .message.assistant {
+            background: rgba(74, 222, 128, 0.1);
+            border-left: 3px solid #4ade80;
+        }
+
+        .message-label {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.4);
+            margin-bottom: 4px;
+        }
+
+        .visualizer-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 4px;
+            height: 60px;
+            margin-bottom: 20px;
+        }
+
+        .visualizer-bar {
+            width: 4px;
+            background: linear-gradient(to top, #667eea, #764ba2);
+            border-radius: 2px;
+            transition: height 0.1s ease;
+        }
+
+        .debug-info {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .debug-info .log-entry {
+            margin-bottom: 4px;
+        }
+
+        .debug-info .log-entry.error {
+            color: #ef4444;
+        }
+
+        .debug-info .log-entry.success {
+            color: #4ade80;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Voice Assistant</h1>
+        <p class="subtitle">Ultra-Low Latency AI Voice Interface</p>
+
+        <div class="status-bar">
+            <div class="status-indicator" id="statusIndicator"></div>
+            <span class="status-text" id="statusText">Odpojeno</span>
+        </div>
+
+        <div class="visualizer-container" id="visualizer">
+            <!-- Audio visualizer bars will be created by JS -->
+        </div>
+
+        <div class="button-container">
+            <button class="start-button" id="startButton">Spustit</button>
+        </div>
+
+        <div class="transcript-container">
+            <div class="transcript-label">Konverzace</div>
+            <div class="transcript-content" id="transcriptContent">
+                <p style="color: rgba(255,255,255,0.4); font-style: italic;">Klikněte na "Spustit" pro zahájení konverzace...</p>
+            </div>
+        </div>
+
+        <div class="debug-info" id="debugInfo">
+            <div class="log-entry">Připraveno k použití</div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const WS_URL = `ws://${window.location.host}/ws/audio`;
+        const SAMPLE_RATE = 16000;
+        const CHANNELS = 1;
+
+        // State
+        let websocket = null;
+        let mediaStream = null;
+        let audioContext = null;
+        let audioWorklet = null;
+        let isActive = false;
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        let currentUserText = '';
+        let currentAssistantText = '';
+
+        // DOM Elements
+        const startButton = document.getElementById('startButton');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const transcriptContent = document.getElementById('transcriptContent');
+        const debugInfo = document.getElementById('debugInfo');
+        const visualizer = document.getElementById('visualizer');
+
+        // Initialize visualizer bars
+        function initVisualizer() {
+            visualizer.innerHTML = '';
+            for (let i = 0; i < 32; i++) {
+                const bar = document.createElement('div');
+                bar.className = 'visualizer-bar';
+                bar.style.height = '4px';
+                visualizer.appendChild(bar);
+            }
+        }
+
+        // Update visualizer with audio levels
+        function updateVisualizer(levels) {
+            const bars = visualizer.querySelectorAll('.visualizer-bar');
+            bars.forEach((bar, i) => {
+                const level = levels[i] || 0;
+                bar.style.height = `${4 + level * 56}px`;
+            });
+        }
+
+        // Reset visualizer
+        function resetVisualizer() {
+            const bars = visualizer.querySelectorAll('.visualizer-bar');
+            bars.forEach(bar => {
+                bar.style.height = '4px';
+            });
+        }
+
+        // Logging
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            debugInfo.insertBefore(entry, debugInfo.firstChild);
+            
+            // Keep only last 50 entries
+            while (debugInfo.children.length > 50) {
+                debugInfo.removeChild(debugInfo.lastChild);
+            }
+            
+            console.log(`[${type.toUpperCase()}]`, message);
+        }
+
+        // Update status
+        function setStatus(status, text) {
+            statusIndicator.className = 'status-indicator ' + status;
+            statusText.textContent = text;
+        }
+
+        // Add message to transcript
+        function addMessage(text, type, isFinal = true) {
+            if (type === 'user') {
+                if (isFinal && text) {
+                    const msg = document.createElement('div');
+                    msg.className = 'message user';
+                    msg.innerHTML = `<div class="message-label">Vy:</div>${text}`;
+                    transcriptContent.appendChild(msg);
+                    transcriptContent.scrollTop = transcriptContent.scrollHeight;
+                    currentUserText = '';
+                } else {
+                    currentUserText = text;
+                }
+            } else if (type === 'assistant') {
+                if (isFinal) {
+                    if (currentAssistantText) {
+                        const msg = document.createElement('div');
+                        msg.className = 'message assistant';
+                        msg.innerHTML = `<div class="message-label">Asistent:</div>${currentAssistantText}`;
+                        transcriptContent.appendChild(msg);
+                        transcriptContent.scrollTop = transcriptContent.scrollHeight;
+                    }
+                    currentAssistantText = '';
+                } else {
+                    currentAssistantText += text;
+                }
+            }
+        }
+
+        // Clear transcript
+        function clearTranscript() {
+            transcriptContent.innerHTML = '';
+            currentUserText = '';
+            currentAssistantText = '';
+        }
+
+        // Audio playback using Web Audio API
+        async function initAudioPlayback() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 44100
+                });
+            }
+            
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+        }
+
+        // Play audio chunk (MP3 data from ElevenLabs)
+        async function playAudioChunk(audioData) {
+            if (!audioContext) {
+                await initAudioPlayback();
+            }
+
+            try {
+                const arrayBuffer = audioData instanceof ArrayBuffer ? audioData : audioData.buffer;
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+                
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                source.start(0);
+                
+                setStatus('speaking', 'Asistent mluví...');
+                
+                source.onended = () => {
+                    playNextInQueue();
+                };
+                
+            } catch (error) {
+                log(`Error playing audio: ${error.message}`, 'error');
+                playNextInQueue();
+            }
+        }
+
+        // Queue audio for sequential playback
+        function queueAudio(audioData) {
+            audioQueue.push(audioData);
+            if (!isPlayingAudio) {
+                playNextInQueue();
+            }
+        }
+
+        // Play next audio in queue
+        function playNextInQueue() {
+            if (audioQueue.length > 0) {
+                isPlayingAudio = true;
+                const audioData = audioQueue.shift();
+                playAudioChunk(audioData);
+            } else {
+                isPlayingAudio = false;
+                if (isActive) {
+                    setStatus('listening', 'Poslouchám...');
+                }
+            }
+        }
+
+        // Clear audio queue (for barge-in)
+        function clearAudioQueue() {
+            audioQueue = [];
+            isPlayingAudio = false;
+            // Stop any currently playing audio would require more complex handling
+            log('Audio buffer cleared (barge-in)', 'success');
+        }
+
+        // Initialize microphone
+        async function initMicrophone() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: SAMPLE_RATE,
+                        channelCount: CHANNELS,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                log('Microphone access granted', 'success');
+                return true;
+                
+            } catch (error) {
+                log(`Microphone error: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // Process audio from microphone
+        async function startAudioProcessing() {
+            if (!mediaStream) return;
+
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: SAMPLE_RATE
+            });
+
+            const source = audioCtx.createMediaStreamSource(mediaStream);
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+
+            // Use ScriptProcessor for audio capture (wider browser support)
+            const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+            source.connect(processor);
+            processor.connect(audioCtx.destination);
+
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+            processor.onaudioprocess = (e) => {
+                if (!isActive || !websocket || websocket.readyState !== WebSocket.OPEN) return;
+
+                // Get audio data
+                const inputData = e.inputBuffer.getChannelData(0);
+                
+                // Convert Float32 to Int16 PCM
+                const pcmData = new Int16Array(inputData.length);
+                for (let i = 0; i < inputData.length; i++) {
+                    const s = Math.max(-1, Math.min(1, inputData[i]));
+                    pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+
+                // Send to WebSocket
+                websocket.send(pcmData.buffer);
+
+                // Update visualizer
+                analyser.getByteFrequencyData(dataArray);
+                const levels = Array.from(dataArray.slice(0, 32)).map(v => v / 255);
+                updateVisualizer(levels);
+            };
+
+            audioWorklet = { processor, audioCtx, analyser };
+            log('Audio processing started', 'success');
+        }
+
+        // Stop audio processing
+        function stopAudioProcessing() {
+            if (audioWorklet) {
+                audioWorklet.processor.disconnect();
+                audioWorklet.audioCtx.close();
+                audioWorklet = null;
+            }
+            
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            
+            resetVisualizer();
+            log('Audio processing stopped');
+        }
+
+        // Connect WebSocket
+        function connectWebSocket() {
+            return new Promise((resolve, reject) => {
+                log(`Connecting to ${WS_URL}...`);
+                
+                websocket = new WebSocket(WS_URL);
+                
+                websocket.onopen = () => {
+                    log('WebSocket connected', 'success');
+                    setStatus('connected', 'Připojeno');
+                    resolve();
+                };
+                
+                websocket.onclose = (event) => {
+                    log(`WebSocket closed: ${event.code}`, event.wasClean ? 'info' : 'error');
+                    setStatus('', 'Odpojeno');
+                    if (isActive) {
+                        stop();
+                    }
+                };
+                
+                websocket.onerror = (error) => {
+                    log('WebSocket error', 'error');
+                    reject(error);
+                };
+                
+                websocket.onmessage = async (event) => {
+                    if (event.data instanceof Blob) {
+                        // Binary audio data
+                        const arrayBuffer = await event.data.arrayBuffer();
+                        queueAudio(arrayBuffer);
+                    } else {
+                        // JSON message
+                        try {
+                            const message = JSON.parse(event.data);
+                            handleMessage(message);
+                        } catch (e) {
+                            log(`Invalid JSON: ${event.data}`, 'error');
+                        }
+                    }
+                };
+            });
+        }
+
+        // Handle incoming messages
+        function handleMessage(message) {
+            switch (message.type) {
+                case 'session_started':
+                    log('Session started', 'success');
+                    setStatus('listening', 'Poslouchám...');
+                    break;
+                    
+                case 'user_text':
+                    addMessage(message.text, 'user', message.is_final);
+                    if (!message.is_final) {
+                        log(`User (interim): ${message.text}`);
+                    } else {
+                        log(`User: ${message.text}`, 'success');
+                    }
+                    break;
+                    
+                case 'assistant_text':
+                    addMessage(message.text, 'assistant', message.is_final);
+                    if (!message.is_final && message.text) {
+                        // Don't log every token, too noisy
+                    } else if (message.is_final) {
+                        log('Assistant response complete', 'success');
+                    }
+                    break;
+                    
+                case 'clear_audio':
+                    log('Barge-in: Clearing audio', 'success');
+                    clearAudioQueue();
+                    setStatus('listening', 'Poslouchám...');
+                    break;
+                    
+                case 'audio_end':
+                    log('Audio stream ended');
+                    setStatus('listening', 'Poslouchám...');
+                    break;
+                    
+                case 'error':
+                    log(`Server error: ${message.message}`, 'error');
+                    break;
+                    
+                case 'pong':
+                    // Heartbeat response
+                    break;
+                    
+                default:
+                    log(`Unknown message type: ${message.type}`);
+            }
+        }
+
+        // Start session
+        async function start() {
+            try {
+                startButton.disabled = true;
+                
+                // Initialize audio playback context (needs user interaction)
+                await initAudioPlayback();
+                
+                // Get microphone access
+                if (!await initMicrophone()) {
+                    throw new Error('Failed to access microphone');
+                }
+                
+                // Connect WebSocket
+                await connectWebSocket();
+                
+                // Start processing audio
+                await startAudioProcessing();
+                
+                isActive = true;
+                startButton.textContent = 'Zastavit';
+                startButton.classList.add('active');
+                startButton.disabled = false;
+                
+                // Clear old transcript
+                clearTranscript();
+                
+                log('Voice session active', 'success');
+                
+            } catch (error) {
+                log(`Start error: ${error.message}`, 'error');
+                stop();
+                startButton.disabled = false;
+            }
+        }
+
+        // Stop session
+        function stop() {
+            isActive = false;
+            
+            // Send stop message
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({ type: 'stop' }));
+                websocket.close();
+            }
+            websocket = null;
+            
+            // Stop audio processing
+            stopAudioProcessing();
+            
+            // Clear audio queue
+            clearAudioQueue();
+            
+            // Reset UI
+            startButton.textContent = 'Spustit';
+            startButton.classList.remove('active');
+            setStatus('', 'Odpojeno');
+            
+            log('Session stopped');
+        }
+
+        // Toggle session
+        function toggle() {
+            if (isActive) {
+                stop();
+            } else {
+                start();
+            }
+        }
+
+        // Heartbeat to keep connection alive
+        setInterval(() => {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, 30000);
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initVisualizer();
+            startButton.addEventListener('click', toggle);
+            
+            // Check for required APIs
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                log('getUserMedia not supported in this browser', 'error');
+                startButton.disabled = true;
+            }
+            
+            if (!window.WebSocket) {
+                log('WebSocket not supported in this browser', 'error');
+                startButton.disabled = true;
+            }
+            
+            log('Client ready');
+        });
+    </script>
+</body>
+</html>

@@ -19,11 +19,23 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy all Python files explicitly
+COPY main.py .
+COPY config.py .
+COPY errors.py .
+COPY text_normalizer.py .
 
-# List files for debugging
-RUN echo "=== Files in /app ===" && ls -la /app && echo "=== Python path ===" && python -c "import sys; print(sys.path)"
+# Copy client folder explicitly
+COPY client/ ./client/
+
+# Verify client folder contents
+RUN echo "=== Verifying client folder ===" && \
+    ls -la /app/client/ && \
+    echo "=== client/index.html exists: ===" && \
+    cat /app/client/index.html | head -20
+
+# List all files for debugging
+RUN echo "=== All files in /app ===" && ls -la /app
 
 # Verify module can be imported
 RUN python -c "import main; print('Module import OK')"

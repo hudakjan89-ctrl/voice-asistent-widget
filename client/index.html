@@ -717,18 +717,30 @@
             initVisualizer();
             startButton.addEventListener('click', toggle);
             
+            // Log environment info
+            log(`Protocol: ${window.location.protocol}`);
+            log(`Host: ${window.location.host}`);
+            log(`Secure context: ${window.isSecureContext}`);
+            
             // Check for required APIs
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                log('getUserMedia not supported in this browser', 'error');
+            if (!window.isSecureContext) {
+                log('ERROR: Stránka nie je v secure context!', 'error');
+                log('Mikrofón vyžaduje HTTPS. Použi https:// URL', 'error');
+                startButton.disabled = true;
+            } else if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                log('getUserMedia nie je dostupné', 'error');
+                log('Skús obnoviť stránku alebo povoliť mikrofón v nastaveniach', 'error');
                 startButton.disabled = true;
             }
             
             if (!window.WebSocket) {
-                log('WebSocket not supported in this browser', 'error');
+                log('WebSocket nie je podporovaný', 'error');
                 startButton.disabled = true;
             }
             
-            log('Client ready');
+            if (!startButton.disabled) {
+                log('Klient pripravený - klikni Spustit', 'success');
+            }
         });
     </script>
 </body>

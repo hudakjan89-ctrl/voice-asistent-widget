@@ -211,7 +211,7 @@ def get_greeting_prompt() -> str:
         time_of_day = "noc"
         greeting = "Dobrý večer"
     
-    return f"Vygeneruj krátký pozdrav pro zákazníka. Je {time_of_day}. Použij pozdrav '{greeting}' a představ se jako Alex z EniQ. Zeptej se jak můžeš pomoci. Maximálně jedna věta."
+    return f"Pozdrav zákazníka jednou krátkou větou. Je {time_of_day}. Řekni '{greeting}' a zeptej se jak můžeš dnes pomoci. Nepředstavuj se jménem. Příklad: '{greeting}, jak vám dnes mohu pomoci?'"
 
 
 def get_system_prompt() -> str:

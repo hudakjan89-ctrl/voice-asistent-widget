@@ -769,9 +769,6 @@ class VoiceSession:
             self.check_inactivity()
         )
         
-        # NO automatic greeting - wait for user to speak first
-        # await self.generate_greeting()
-        
         # Update activity timestamp
         self.update_activity()
         
@@ -780,7 +777,11 @@ class VoiceSession:
             "message": "Voice session started"
         })
         
-        logger.info("Session ready - waiting for user to speak")
+        # Generate automatic greeting
+        logger.info("Generating automatic greeting...")
+        await self.generate_greeting()
+        
+        logger.info("Session ready - listening for user input")
     
     async def cleanup(self):
         """Clean up all connections."""

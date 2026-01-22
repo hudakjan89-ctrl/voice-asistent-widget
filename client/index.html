@@ -485,8 +485,14 @@
 
             const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
+            let audioChunkCount = 0;
             processor.onaudioprocess = (e) => {
-                if (!isActive || !websocket || websocket.readyState !== WebSocket.OPEN) return;
+                if (!isActive || !websocket || websocket.readyState !== WebSocket.OPEN) {
+                    if (audioChunkCount > 0 && audioChunkCount % 100 === 0) {
+                        log(`Audio not sent: active=${isActive}, ws=${websocket?.readyState}`, 'error');
+                    }
+                    return;
+                }
 
                 // Get audio data
                 const inputData = e.inputBuffer.getChannelData(0);
@@ -499,7 +505,16 @@
                 }
 
                 // Send to WebSocket
-                websocket.send(pcmData.buffer);
+                try {
+                    websocket.send(pcmData.buffer);
+                    audioChunkCount++;
+                    // Log every 100 chunks (roughly every 25 seconds)
+                    if (audioChunkCount % 100 === 0) {
+                        log(`Sending audio... (${audioChunkCount} chunks sent)`);
+                    }
+                } catch (err) {
+                    log(`Error sending audio: ${err.message}`, 'error');
+                }
 
                 // Update visualizer
                 analyser.getByteFrequencyData(dataArray);
@@ -542,7 +557,7 @@
                 };
                 
                 websocket.onclose = (event) => {
-                    log(`WebSocket closed: ${event.code}`, event.wasClean ? 'info' : 'error');
+                    log(`WebSocket closed: code=${event.code}, reason="${event.reason}", clean=${event.wasClean}`, event.wasClean ? 'info' : 'error');
                     setStatus('', 'Odpojeno');
                     if (isActive) {
                         stop();

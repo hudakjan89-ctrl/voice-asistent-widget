@@ -570,6 +570,9 @@ class VoiceSession:
                 if data.get("isFinal"):
                     self.is_speaking = False
                     await self.send_to_client({"type": "audio_end"})
+                    # Tell client we're ready to listen again
+                    await self.send_to_client({"type": "listening"})
+                    logger.info("TTS audio finished, ready for next user input")
                     break
                     
         except Exception as e:
@@ -654,6 +657,15 @@ class VoiceSession:
                                     self.current_response_task = asyncio.create_task(
                                         self.generate_llm_response(transcript)
                                     )
+                                    
+                                    # Wait for response to complete before continuing to listen
+                                    try:
+                                        await self.current_response_task
+                                        logger.info("Response complete, continuing to listen...")
+                                    except asyncio.CancelledError:
+                                        logger.info("Response was interrupted")
+                                    except Exception as e:
+                                        logger.error(f"Error in response task: {e}")
                     
                     # Handle utterance end
                     if data.get("type") == "UtteranceEnd":
@@ -757,8 +769,8 @@ class VoiceSession:
             self.check_inactivity()
         )
         
-        # Generate immediate greeting
-        await self.generate_greeting()
+        # NO automatic greeting - wait for user to speak first
+        # await self.generate_greeting()
         
         # Update activity timestamp
         self.update_activity()
@@ -767,6 +779,8 @@ class VoiceSession:
             "type": "session_started",
             "message": "Voice session started"
         })
+        
+        logger.info("Session ready - waiting for user to speak")
     
     async def cleanup(self):
         """Clean up all connections."""

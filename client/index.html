@@ -606,6 +606,10 @@
                     
                 case 'audio_end':
                     log('Audio stream ended');
+                    break;
+                    
+                case 'listening':
+                    log('Ready for input', 'success');
                     setStatus('listening', 'Poslouchám...');
                     break;
                 

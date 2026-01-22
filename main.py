@@ -1,4 +1,4 @@
-# Force rebuild v2 - fix client/index.html
+# Force rebuild v3 - fix static file routing order
 """
 Ultra-Low Latency Voice Assistant Backend
 Main FastAPI server with WebSocket audio streaming pipeline.
@@ -13,7 +13,6 @@ from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import httpx
@@ -926,24 +925,29 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# IMPORTANT: Mount static files AFTER all route definitions!
-# This must be at the end, otherwise it will override other routes
+# STATIC FILE ROUTES - MUST BE ABSOLUTE LAST!
 @app.get("/")
 async def serve_index():
     """Serve index.html"""
+    logger.info("Serving index.html")
     return FileResponse("/app/client/index.html")
+
 
 @app.get("/{full_path:path}")
 async def serve_static(full_path: str):
-    """Serve static files"""
+    """Serve static files - catch-all route, must be last!"""
     import os
+    
+    logger.debug(f"Static file request: {full_path}")
     file_path = f"/app/client/{full_path}"
     
     if os.path.exists(file_path) and os.path.isfile(file_path):
+        logger.debug(f"Serving file: {file_path}")
         return FileResponse(file_path)
     else:
-        # If file not found, serve index.html (for SPA routing)
+        logger.debug(f"File not found: {file_path}, serving index.html")
         return FileResponse("/app/client/index.html")
+
 
 logger.info("Static file routes configured for /app/client")
 

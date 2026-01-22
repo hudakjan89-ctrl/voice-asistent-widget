@@ -139,56 +139,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 # Add middleware
 app.add_middleware(RequestLoggingMiddleware)
 
-# Mount static files for client
-try:
-    app.mount("/static", StaticFiles(directory="client"), name="static")
-    logger.info("Static files mounted from 'client' directory")
-except Exception as e:
-    logger.error(f"Failed to mount static files: {e}")
-
-
-@app.get("/")
-async def root():
-    """Serve the test client."""
-    import os
-    
-    file_path = "client/index.html"
-    logger.debug(f"Serving root - looking for: {file_path}")
-    logger.debug(f"Current working directory: {os.getcwd()}")
-    logger.debug(f"File exists: {os.path.exists(file_path)}")
-    
-    # Detailed diagnostics
-    client_exists = os.path.exists("client")
-    client_is_dir = os.path.isdir("client") if client_exists else False
-    client_contents = []
-    if client_is_dir:
-        try:
-            client_contents = os.listdir("client")
-        except Exception as e:
-            client_contents = [f"ERROR: {e}"]
-    
-    logger.debug(f"Client dir exists: {client_exists}, is_dir: {client_is_dir}, contents: {client_contents}")
-    
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
-        logger.error(f"Current directory contents: {os.listdir('.')}")
-        logger.error(f"Client directory contents: {client_contents}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "client/index.html not found",
-                "cwd": os.getcwd(),
-                "files": os.listdir("."),
-                "client_exists": client_exists,
-                "client_is_dir": client_is_dir,
-                "client_contents": client_contents,
-                "file_path_checked": os.path.abspath(file_path)
-            }
-        )
-    
-    logger.info(f"Serving index.html from {os.path.abspath(file_path)}")
-    return FileResponse(file_path)
-
 
 @app.get("/health")
 async def health_check():
@@ -974,6 +924,13 @@ async def global_exception_handler(request: Request, exc: Exception):
             "traceback": tb_str
         }
     )
+
+
+# IMPORTANT: Mount static files AFTER all route definitions!
+# This must be at the end, otherwise it will override other routes
+app.mount("/", StaticFiles(directory="/app/client", html=True), name="client")
+
+logger.info("Static files mounted at / from /app/client")
 
 
 if __name__ == "__main__":

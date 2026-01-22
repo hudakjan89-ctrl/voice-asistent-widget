@@ -653,19 +653,10 @@ class VoiceSession:
                                 if is_final or speech_final:
                                     logger.info(f"Final transcript: {transcript}")
                                     
-                                    # Generate response
+                                    # Generate response (don't await - let it run in background)
                                     self.current_response_task = asyncio.create_task(
                                         self.generate_llm_response(transcript)
                                     )
-                                    
-                                    # Wait for response to complete before continuing to listen
-                                    try:
-                                        await self.current_response_task
-                                        logger.info("Response complete, continuing to listen...")
-                                    except asyncio.CancelledError:
-                                        logger.info("Response was interrupted")
-                                    except Exception as e:
-                                        logger.error(f"Error in response task: {e}")
                     
                     # Handle utterance end
                     if data.get("type") == "UtteranceEnd":
@@ -741,10 +732,15 @@ class VoiceSession:
         # Connect to ElevenLabs first
         await self.connect_elevenlabs()
         
-        # Generate greeting
-        self.current_response_task = asyncio.create_task(
-            self.generate_llm_response(greeting_prompt, is_greeting=True)
-        )
+        # Generate greeting and wait for it to complete
+        try:
+            await self.generate_llm_response(greeting_prompt, is_greeting=True)
+            logger.info("Greeting completed successfully")
+        except Exception as e:
+            logger.error(f"Error generating greeting: {e}")
+        
+        # Send listening status after greeting
+        await self.send_to_client({"type": "listening"})
     
     async def start(self):
         """Start the voice session."""
@@ -863,6 +859,11 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                     timeout=5.0
                 )
                 
+                # Check for disconnect
+                if data.get("type") == "websocket.disconnect":
+                    logger.info("WebSocket disconnect message received")
+                    break
+                
                 if "bytes" in data:
                     # Audio data from client
                     await session.send_audio_to_deepgram(data["bytes"])
@@ -886,10 +887,15 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                         
             except asyncio.TimeoutError:
                 # Just a timeout, continue checking session status
+                logger.debug("Receive timeout, continuing...")
                 continue
             except WebSocketDisconnect:
                 logger.info("WebSocket disconnected by client")
                 break
+            except Exception as e:
+                logger.error(f"Error in receive loop: {e}")
+                # Don't break on error, try to continue
+                continue
                 
     except Exception as e:
         logger.error(f"WebSocket error: {e}")

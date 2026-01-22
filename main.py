@@ -591,7 +591,9 @@ class VoiceSession:
         """Establish WebSocket connection to Deepgram for STT."""
         import websockets
         
-        url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true"
+        url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
+        
+        logger.info(f"Connecting to Deepgram: model={DEEPGRAM_MODEL}, language={DEEPGRAM_LANGUAGE}")
         
         try:
             self.deepgram_ws = await websockets.connect(
@@ -601,7 +603,7 @@ class VoiceSession:
                 ping_timeout=10,
             )
             
-            logger.info("Connected to Deepgram")
+            logger.info("Connected to Deepgram successfully")
             
         except Exception as e:
             logger.error(f"Error connecting to Deepgram: {e}")
@@ -610,6 +612,9 @@ class VoiceSession:
     
     async def receive_deepgram_transcripts(self):
         """Receive and process transcripts from Deepgram with reconnection support."""
+        logger.info("Starting Deepgram transcript receiver...")
+        message_count = 0
+        
         while self.session_active:
             try:
                 if not self.deepgram_ws:
@@ -619,7 +624,11 @@ class VoiceSession:
                         logger.error("Failed to reconnect to Deepgram")
                         break
                 
+                logger.info("Listening for Deepgram messages...")
                 async for message in self.deepgram_ws:
+                    message_count += 1
+                    if message_count % 10 == 1:
+                        logger.debug(f"Deepgram message #{message_count}")
                     if not self.session_active:
                         break
                     
@@ -718,10 +727,17 @@ class VoiceSession:
             try:
                 await self.deepgram_ws.send(audio_data)
                 self.stats["audio_chunks_sent"] += 1
+                # Log every 50 chunks
+                if self.stats["audio_chunks_sent"] % 50 == 0:
+                    logger.debug(f"Audio chunks sent to Deepgram: {self.stats['audio_chunks_sent']}")
             except Exception as e:
                 logger.error(f"Error sending to Deepgram: {e}")
                 # Mark connection as closed to trigger reconnection
                 self.deepgram_ws = None
+        elif not self.deepgram_ws:
+            logger.warning("Cannot send audio - Deepgram not connected")
+        elif not self.is_listening:
+            logger.debug("Not listening - audio ignored")
     
     async def generate_greeting(self):
         """Generate and speak the initial greeting."""

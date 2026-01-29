@@ -77,7 +77,7 @@ ELEVENLABS_MODEL = "eleven_turbo_v2_5"
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
 
 # Deepgram Configuration
-DEEPGRAM_MODEL = "nova-2-conversationalai"  # Optimized for voice assistants
+DEEPGRAM_MODEL = "nova-2"  # Nova-2 general model
 DEEPGRAM_LANGUAGE = "cs"  # Czech language
 
 # Server Configuration

@@ -591,16 +591,13 @@ class VoiceSession:
     async def connect_deepgram(self):
         """Establish WebSocket connection to Deepgram for STT."""
         import websockets
-        import urllib.parse
         
-        # Keywords for better recognition of company/domain-specific terms
-        keywords = [
-            "EniQ:2", "automatizace:2", "digitální:1", "procesů:1", 
-            "firma:1", "společnost:1", "služby:1", "řešení:1"
-        ]
-        keywords_param = urllib.parse.quote(",".join(keywords))
+        # Build URL with keywords for better recognition
+        base_url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
         
-        url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000&keywords={keywords_param}"
+        # Add keywords for company-specific terms (correct format: &keywords=word:boost)
+        keywords_params = "&keywords=EniQ:2&keywords=automatizace:1.5&keywords=digitální:1&keywords=procesů:1"
+        url = base_url + keywords_params
         
         logger.info(f"Connecting to Deepgram: model={DEEPGRAM_MODEL}, language={DEEPGRAM_LANGUAGE}")
         
@@ -612,7 +609,7 @@ class VoiceSession:
                 ping_timeout=10,
             )
             
-            logger.info("Connected to Deepgram successfully")
+            logger.info("Connected to Deepgram successfully with keywords boost")
             
         except Exception as e:
             logger.error(f"Error connecting to Deepgram: {e}")

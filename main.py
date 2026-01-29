@@ -183,9 +183,9 @@ async def detailed_health_check():
                 }
             )
             results["checks"]["gladia"] = {
-                "status": "ok" if response.status_code == 200 else "error",
+                "status": "ok" if response.status_code in [200, 201] else "error",
                 "reachable": True,
-                "authenticated": response.status_code == 200
+                "authenticated": response.status_code in [200, 201]
             }
     except Exception as e:
         results["checks"]["gladia"] = {
@@ -626,7 +626,7 @@ class VoiceSession:
                     timeout=30.0,
                 )
                 
-                if response.status_code != 200:
+                if response.status_code not in [200, 201]:
                     error_text = response.text
                     logger.error(f"Gladia init failed: {response.status_code} - {error_text}")
                     raise STTError(f"Failed to initialize Gladia session: {response.status_code}")

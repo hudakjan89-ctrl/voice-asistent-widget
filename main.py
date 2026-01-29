@@ -517,7 +517,7 @@ class VoiceSession:
                     "use_speaker_boost": True
                 },
                 "generation_config": {
-                    "chunk_length_schedule": [40, 60, 80, 100]
+                    "chunk_length_schedule": [50, 80, 120, 150]
                 },
                 "xi_api_key": ELEVENLABS_API_KEY
             }

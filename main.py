@@ -87,8 +87,8 @@ async def lifespan(app: FastAPI):
     # Log configuration summary
     config = get_config_summary()
     logger.info(f"LLM Model: {config['llm_model']}")
-    logger.info(f"Deepgram Model: {config['deepgram_model']}")
-    logger.info(f"Deepgram Language: {config['deepgram_language']}")
+    logger.info(f"STT Service: {config['stt_service']}")
+    logger.info(f"STT Language: {config['stt_language']}")
     logger.info(f"ElevenLabs Voice: {config['elevenlabs_voice_id']}")
     
     yield

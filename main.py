@@ -593,10 +593,10 @@ class VoiceSession:
         import websockets
         
         # Build URL with keywords for better recognition
-        base_url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
+        base_url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&smart_format=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
         
-        # Add keywords for company-specific terms with higher boost values
-        keywords_params = "&keywords=EniQ:3&keywords=automatizace:2&keywords=digitální:2&keywords=procesů:2&keywords=firma:1.5&keywords=společnost:1.5&keywords=služby:1.5"
+        # Add keywords with very high boost for company-specific terms
+        keywords_params = "&keywords=EniQ:5&keywords=automatizace:3&keywords=digitální:2.5&keywords=procesů:2.5&keywords=firma:2&keywords=společnost:2&keywords=služby:2&keywords=Alex:2"
         url = base_url + keywords_params
         
         logger.info(f"Connecting to Deepgram: model={DEEPGRAM_MODEL}, language={DEEPGRAM_LANGUAGE}")
@@ -779,13 +779,6 @@ class VoiceSession:
         # Send greeting to TTS
         try:
             await self.stream_to_elevenlabs(greeting_text)
-            
-            # Start receiving audio in background
-            if self.elevenlabs_ws and not self.elevenlabs_receiver_task:
-                self.elevenlabs_receiver_task = asyncio.create_task(
-                    self.receive_elevenlabs_audio()
-                )
-            
             logger.info("Greeting sent to TTS successfully")
         except Exception as e:
             logger.error(f"Error sending greeting to TTS: {e}")

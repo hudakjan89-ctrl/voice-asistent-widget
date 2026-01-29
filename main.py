@@ -147,8 +147,8 @@ async def health_check():
         "service": "voice-assistant",
         "config": {
             "llm_model": config["llm_model"],
-            "deepgram_model": config["deepgram_model"],
-            "deepgram_language": config["deepgram_language"],
+            "stt_service": config["stt_service"],
+            "stt_language": config["stt_language"],
             "api_keys_configured": config["api_keys_configured"],
         }
     })
@@ -166,20 +166,29 @@ async def detailed_health_check():
         "checks": {}
     }
     
-    # Check Deepgram API connectivity
+    # Check Gladia API connectivity
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(
-                "https://api.deepgram.com/v1/projects",
-                headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+            response = await client.post(
+                "https://api.gladia.io/v2/live",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-gladia-key": GLADIA_API_KEY
+                },
+                json={
+                    "encoding": "wav/pcm",
+                    "sample_rate": 16000,
+                    "bit_depth": 16,
+                    "channels": 1
+                }
             )
-            results["checks"]["deepgram"] = {
-                "status": "ok" if response.status_code in [200, 401] else "error",
+            results["checks"]["gladia"] = {
+                "status": "ok" if response.status_code == 200 else "error",
                 "reachable": True,
                 "authenticated": response.status_code == 200
             }
     except Exception as e:
-        results["checks"]["deepgram"] = {
+        results["checks"]["gladia"] = {
             "status": "error",
             "reachable": False,
             "error": str(e)
@@ -236,7 +245,7 @@ async def detailed_health_check():
 class VoiceSession:
     """
     Manages a single voice conversation session.
-    Handles the full pipeline: Deepgram (STT) -> LLM -> ElevenLabs (TTS)
+    Handles the full pipeline: Gladia (STT) -> LLM -> ElevenLabs (TTS)
     """
     
     # Reconnection settings
@@ -792,9 +801,9 @@ class VoiceSession:
             except Exception as e:
                 logger.error(f"Error sending to Gladia: {e}")
                 # Mark connection as closed to trigger reconnection
-                self.deepgram_ws = None
-        elif not self.deepgram_ws:
-            logger.warning("Cannot send audio - Deepgram not connected")
+                self.gladia_ws = None
+        elif not self.gladia_ws:
+            logger.warning("Cannot send audio - Gladia not connected")
         elif not self.is_listening:
             logger.debug("Not listening - audio ignored")
     
@@ -952,7 +961,7 @@ async def websocket_audio_endpoint(websocket: WebSocket):
         # Start the session (connects to services, generates greeting)
         await session.start()
         
-        # Main receive loop - forward audio to Deepgram
+        # Main receive loop - forward audio to Gladia
         while session.session_active:
             try:
                 # Use a timeout to check session status periodically

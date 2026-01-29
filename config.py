@@ -70,8 +70,10 @@ LLM_MODEL = os.getenv("LLM_MODEL", "anthropic/claude-3.5-haiku")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # ElevenLabs Configuration
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "e36pGtHFyzkf4HTb9rQG")
-ELEVENLABS_MODEL = "eleven_turbo_v2_5"  # Using turbo model (multilingual v2 not working)
+# TEMPORARY: Using Antoni (free voice) until custom voice is cloned
+# Original library voice (e36pGtHFyzkf4HTb9rQG) requires paid plan
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "ErXwobaYiN019PkySvjV")  # Antoni
+ELEVENLABS_MODEL = "eleven_turbo_v2_5"
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
 
 # Deepgram Configuration

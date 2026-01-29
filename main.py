@@ -19,7 +19,8 @@ import httpx
 from openai import AsyncOpenAI
 
 from config import (
-    DEEPGRAM_API_KEY,
+    GLADIA_API_KEY,
+    GLADIA_WS_URL,
     OPENROUTER_API_KEY,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
@@ -27,8 +28,6 @@ from config import (
     ELEVENLABS_WS_URL,
     LLM_MODEL,
     OPENROUTER_BASE_URL,
-    DEEPGRAM_MODEL,
-    DEEPGRAM_LANGUAGE,
     SESSION_INACTIVITY_TIMEOUT,
     MAX_CONVERSATION_HISTORY,
     get_system_prompt,
@@ -257,13 +256,14 @@ class VoiceSession:
         self.detected_language = "cs"  # Default to Czech, will auto-detect from STT
         
         # Async tasks and connections
-        self.deepgram_ws: Optional[WebSocket] = None
+        self.gladia_ws: Optional[WebSocket] = None
+        self.gladia_session_id: Optional[str] = None  # Gladia session ID for reconnection
         self.elevenlabs_ws: Optional[WebSocket] = None
         self.current_response_task: Optional[asyncio.Task] = None
-        self.deepgram_receiver_task: Optional[asyncio.Task] = None
+        self.gladia_receiver_task: Optional[asyncio.Task] = None
         
         # Reconnection tracking
-        self.deepgram_reconnect_attempts = 0
+        self.gladia_reconnect_attempts = 0
         
         # Text accumulator for LLM response
         self.pending_text = ""
@@ -589,157 +589,208 @@ class VoiceSession:
                     pass
                 self.elevenlabs_ws = None
     
-    async def connect_deepgram(self):
-        """Establish WebSocket connection to Deepgram for STT."""
-        import websockets
-        
-        # Build URL with keywords for better recognition
-        # Note: Using only non-diacritic keywords to avoid URL encoding issues
-        base_url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&smart_format=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
-        
-        # Add keywords without Slovak diacritics (EniQ, Alex, firma)
-        keywords_params = "&keywords=EniQ:5&keywords=automatizacia:3&keywords=digitalny:2.5&keywords=procesov:2.5&keywords=firma:2&keywords=spolocnost:2&keywords=sluzby:2&keywords=Alex:2"
-        url = base_url + keywords_params
-        
-        logger.info(f"Connecting to Deepgram: model={DEEPGRAM_MODEL}, language={DEEPGRAM_LANGUAGE}")
+    async def init_gladia_session(self):
+        """Initialize a Gladia session and get WebSocket URL."""
+        logger.info("Initializing Gladia session...")
         
         try:
-            self.deepgram_ws = await websockets.connect(
-                url,
-                extra_headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"},
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.gladia.io/v2/live",
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-gladia-key": GLADIA_API_KEY,
+                    },
+                    json={
+                        "encoding": "wav/pcm",
+                        "sample_rate": 16000,
+                        "bit_depth": 16,
+                        "channels": 1,
+                        "language_config": {
+                            "languages": ["sk", "cs"],  # Slovak and Czech
+                            "code_switching": True,  # Allow switching between languages
+                        },
+                        "messages_config": {
+                            "receive_partial_transcripts": True,  # Get interim results
+                        },
+                    },
+                    timeout=30.0,
+                )
+                
+                if response.status_code != 200:
+                    error_text = response.text
+                    logger.error(f"Gladia init failed: {response.status_code} - {error_text}")
+                    raise STTError(f"Failed to initialize Gladia session: {response.status_code}")
+                
+                data = response.json()
+                self.gladia_session_id = data["id"]
+                ws_url = data["url"]
+                
+                logger.info(f"Gladia session initialized: {self.gladia_session_id}")
+                return ws_url
+                
+        except Exception as e:
+            logger.error(f"Error initializing Gladia session: {e}")
+            raise
+    
+    async def connect_gladia(self):
+        """Establish WebSocket connection to Gladia for STT."""
+        import websockets
+        
+        # Initialize session and get WebSocket URL
+        ws_url = await self.init_gladia_session()
+        
+        logger.info(f"Connecting to Gladia WebSocket...")
+        
+        try:
+            self.gladia_ws = await websockets.connect(
+                ws_url,
                 ping_interval=20,
                 ping_timeout=10,
             )
             
-            logger.info("Connected to Deepgram successfully with keywords boost")
+            logger.info("Connected to Gladia successfully (SK/CZ auto-detection enabled)")
             
         except Exception as e:
-            logger.error(f"Error connecting to Deepgram: {e}")
-            self.deepgram_ws = None
+            logger.error(f"Error connecting to Gladia: {e}")
+            self.gladia_ws = None
             raise
     
-    async def receive_deepgram_transcripts(self):
-        """Receive and process transcripts from Deepgram with reconnection support."""
-        logger.info("Starting Deepgram transcript receiver...")
+    async def receive_gladia_transcripts(self):
+        """Receive and process transcripts from Gladia with reconnection support."""
+        logger.info("Starting Gladia transcript receiver...")
         message_count = 0
         
         while self.session_active:
             try:
-                if not self.deepgram_ws:
-                    logger.warning("Deepgram WebSocket not connected, attempting to reconnect...")
-                    await self.reconnect_deepgram()
-                    if not self.deepgram_ws:
-                        logger.error("Failed to reconnect to Deepgram")
+                if not self.gladia_ws:
+                    logger.warning("Gladia WebSocket not connected, attempting to reconnect...")
+                    await self.reconnect_gladia()
+                    if not self.gladia_ws:
+                        logger.error("Failed to reconnect to Gladia")
                         break
                 
-                logger.info("Listening for Deepgram messages...")
-                async for message in self.deepgram_ws:
+                logger.info("Listening for Gladia messages...")
+                async for message in self.gladia_ws:
                     message_count += 1
                     if message_count % 10 == 1:
-                        logger.debug(f"Deepgram message #{message_count}")
+                        logger.debug(f"Gladia message #{message_count}")
                     if not self.session_active:
                         break
                     
                     self.stats["messages_received"] += 1
                     data = json.loads(message)
                     
+                    message_type = data.get("type")
+                    
+                    # Handle transcript messages
+                    if message_type == "transcript":
+                        transcript_data = data.get("data", {})
+                        utterance = transcript_data.get("utterance", {})
+                        
+                        transcript = utterance.get("text", "")
+                        is_final = transcript_data.get("is_final", False)
+                        detected_lang = utterance.get("language", "cs")  # Default to Czech
+                        
+                        # Update detected language for dynamic responses
+                        if detected_lang in ["sk", "cs"]:
+                            self.detected_language = detected_lang
+                            logger.info(f"Language detected: {detected_lang}")
+                        
+                        if transcript:
+                            # Send interim results to client
+                            await self.send_to_client({
+                                "type": "user_text",
+                                "text": transcript,
+                                "is_final": is_final,
+                                "language": detected_lang,
+                            })
+                            
+                            # Process final transcripts
+                            if is_final:
+                                logger.info(f"Final transcript ({detected_lang}): {transcript}")
+                                
+                                # Generate response (don't await - let it run in background)
+                                self.current_response_task = asyncio.create_task(
+                                    self.generate_llm_response(transcript)
+                                )
+                    
                     # Handle speech started event (for barge-in)
-                    if data.get("type") == "SpeechStarted":
+                    elif message_type == "speech_start":
                         logger.info("Speech started detected")
                         if self.is_speaking:
                             await self.handle_barge_in()
-                        continue
                     
-                    # Handle transcript results
-                    if "channel" in data:
-                        alternatives = data.get("channel", {}).get("alternatives", [])
-                        if alternatives:
-                            transcript = alternatives[0].get("transcript", "")
-                            is_final = data.get("is_final", False)
-                            speech_final = data.get("speech_final", False)
-                            
-                            if transcript:
-                                # Send interim results to client
-                                await self.send_to_client({
-                                    "type": "user_text",
-                                    "text": transcript,
-                                    "is_final": is_final or speech_final
-                                })
-                                
-                                # Process final transcripts
-                                if is_final or speech_final:
-                                    logger.info(f"Final transcript: {transcript}")
-                                    
-                                    # Generate response (don't await - let it run in background)
-                                    self.current_response_task = asyncio.create_task(
-                                        self.generate_llm_response(transcript)
-                                    )
+                    # Handle other Gladia events
+                    elif message_type == "speech_end":
+                        logger.info("Speech ended detected")
                     
-                    # Handle utterance end
-                    if data.get("type") == "UtteranceEnd":
-                        logger.info("Utterance end detected")
+                    elif message_type == "error":
+                        error_msg = data.get("data", {}).get("message", "Unknown error")
+                        logger.error(f"Gladia error: {error_msg}")
                 
                 # Connection closed normally, try to reconnect if session still active
                 if self.session_active:
-                    logger.warning("Deepgram connection closed, attempting reconnection...")
-                    self.deepgram_ws = None
-                    await self.reconnect_deepgram()
+                    logger.warning("Gladia connection closed, attempting reconnection...")
+                    self.gladia_ws = None
+                    await self.reconnect_gladia()
                         
             except Exception as e:
-                logger.error(f"Error receiving from Deepgram: {e}")
-                self.deepgram_ws = None
+                logger.error(f"Error receiving from Gladia: {e}")
+                self.gladia_ws = None
                 
                 if self.session_active:
-                    await self.reconnect_deepgram()
+                    await self.reconnect_gladia()
                     
         # Cleanup
-        if self.deepgram_ws:
+        if self.gladia_ws:
             try:
-                await self.deepgram_ws.close()
+                await self.gladia_ws.close()
             except:
                 pass
-            self.deepgram_ws = None
+            self.gladia_ws = None
     
-    async def reconnect_deepgram(self):
-        """Attempt to reconnect to Deepgram with exponential backoff."""
+    async def reconnect_gladia(self):
+        """Attempt to reconnect to Gladia with exponential backoff."""
         if not self.session_active:
             return
         
-        self.deepgram_reconnect_attempts += 1
+        self.gladia_reconnect_attempts += 1
         
-        if self.deepgram_reconnect_attempts > self.MAX_RECONNECT_ATTEMPTS:
+        if self.gladia_reconnect_attempts > self.MAX_RECONNECT_ATTEMPTS:
             error = STTError(f"Max reconnection attempts ({self.MAX_RECONNECT_ATTEMPTS}) reached")
             logger.error(error.message)
             await self.send_to_client(error.to_dict())
             return
         
-        delay = self.RECONNECT_DELAY_BASE * (2 ** (self.deepgram_reconnect_attempts - 1))
-        logger.info(f"Reconnecting to Deepgram (attempt {self.deepgram_reconnect_attempts}) in {delay}s...")
+        delay = self.RECONNECT_DELAY_BASE * (2 ** (self.gladia_reconnect_attempts - 1))
+        logger.info(f"Reconnecting to Gladia (attempt {self.gladia_reconnect_attempts}) in {delay}s...")
         
         await asyncio.sleep(delay)
         
         try:
-            await self.connect_deepgram()
-            self.deepgram_reconnect_attempts = 0  # Reset on successful connection
+            await self.connect_gladia()
+            self.gladia_reconnect_attempts = 0  # Reset on successful connection
             self.stats["reconnections"] += 1
-            logger.info("Successfully reconnected to Deepgram")
+            logger.info("Successfully reconnected to Gladia")
         except Exception as e:
-            logger.error(f"Reconnection to Deepgram failed: {e}")
+            logger.error(f"Reconnection to Gladia failed: {e}")
     
-    async def send_audio_to_deepgram(self, audio_data: bytes):
-        """Forward audio data to Deepgram."""
+    async def send_audio_to_gladia(self, audio_data: bytes):
+        """Forward audio data to Gladia."""
         # Update activity on receiving audio from client
         self.update_activity()
         
-        if self.deepgram_ws and self.is_listening:
+        if self.gladia_ws and self.is_listening:
             try:
-                await self.deepgram_ws.send(audio_data)
+                # Send audio as binary (Gladia accepts raw PCM)
+                await self.gladia_ws.send(audio_data)
                 self.stats["audio_chunks_sent"] += 1
                 # Log every 50 chunks
                 if self.stats["audio_chunks_sent"] % 50 == 0:
-                    logger.debug(f"Audio chunks sent to Deepgram: {self.stats['audio_chunks_sent']}")
+                    logger.debug(f"Audio chunks sent to Gladia: {self.stats['audio_chunks_sent']}")
             except Exception as e:
-                logger.error(f"Error sending to Deepgram: {e}")
+                logger.error(f"Error sending to Gladia: {e}")
                 # Mark connection as closed to trigger reconnection
                 self.deepgram_ws = None
         elif not self.deepgram_ws:
@@ -794,18 +845,18 @@ class VoiceSession:
         """Start the voice session."""
         logger.info("Starting voice session...")
         
-        # Connect to Deepgram
+        # Connect to Gladia
         try:
-            await self.connect_deepgram()
+            await self.connect_gladia()
         except Exception as e:
-            error = ServiceConnectionError("Deepgram", str(e))
-            logger.error(f"Failed to connect to Deepgram: {e}")
+            error = ServiceConnectionError("Gladia", str(e))
+            logger.error(f"Failed to connect to Gladia: {e}")
             await self.send_to_client(error.to_dict())
             return
         
         # Start receiving transcripts in background
-        self.deepgram_receiver_task = asyncio.create_task(
-            self.receive_deepgram_transcripts()
+        self.gladia_receiver_task = asyncio.create_task(
+            self.receive_gladia_transcripts()
         )
         
         # Start inactivity checker
@@ -838,7 +889,7 @@ class VoiceSession:
         # Cancel any running tasks
         tasks_to_cancel = [
             self.current_response_task,
-            self.deepgram_receiver_task,
+            self.gladia_receiver_task,
             self.inactivity_check_task,
         ]
         
@@ -851,12 +902,15 @@ class VoiceSession:
                     pass
         
         # Close WebSocket connections
-        if self.deepgram_ws:
+        if self.gladia_ws:
             try:
-                await self.deepgram_ws.close()
+                # Send stop_recording message before closing
+                await self.gladia_ws.send(json.dumps({"type": "stop_recording"}))
+                await asyncio.sleep(0.1)  # Give Gladia time to process
+                await self.gladia_ws.close()
             except:
                 pass
-            self.deepgram_ws = None
+            self.gladia_ws = None
         
         if self.elevenlabs_ws:
             try:
@@ -914,7 +968,7 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                 
                 if "bytes" in data:
                     # Audio data from client
-                    await session.send_audio_to_deepgram(data["bytes"])
+                    await session.send_audio_to_gladia(data["bytes"])
                     
                 elif "text" in data:
                     # JSON control message from client

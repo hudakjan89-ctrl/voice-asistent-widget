@@ -33,6 +33,9 @@ THOUSANDS = {
 }
 
 # Common abbreviations and their spoken forms
+# NOTE: Single letter units (m, l, g) are NOT included here to avoid replacing
+# them in the middle of words. They should only be replaced in specific contexts
+# like "5 m" which is handled by measurement patterns.
 ABBREVIATIONS: Dict[str, str] = {
     "např.": "například",
     "apod.": "a podobně",
@@ -44,7 +47,6 @@ ABBREVIATIONS: Dict[str, str] = {
     "cca.": "cirka",
     "viz": "viz",
     "vs.": "versus",
-    "vs": "versus",
     "min.": "minut",
     "max.": "maximálně",
     "hod.": "hodin",
@@ -54,15 +56,6 @@ ABBREVIATIONS: Dict[str, str] = {
     "CZK": "korun",
     "EUR": "eur",
     "USD": "dolarů",
-    "km": "kilometrů",
-    "m": "metrů",
-    "cm": "centimetrů",
-    "mm": "milimetrů",
-    "kg": "kilogramů",
-    "g": "gramů",
-    "l": "litrů",
-    "ml": "mililitrů",
-    "%": "procent",
     "tel.": "telefon",
     "č.": "číslo",
     "str.": "strana",
@@ -77,6 +70,19 @@ ABBREVIATIONS: Dict[str, str] = {
     "www": "w w w",
     "@": "zavináč",
 }
+
+# Measurement unit patterns (only when following numbers)
+MEASUREMENT_PATTERNS: List[Tuple[str, str]] = [
+    (r"(\d+)\s*km\b", r"\1 kilometrů"),
+    (r"(\d+)\s*m\b", r"\1 metrů"),
+    (r"(\d+)\s*cm\b", r"\1 centimetrů"),
+    (r"(\d+)\s*mm\b", r"\1 milimetrů"),
+    (r"(\d+)\s*kg\b", r"\1 kilogramů"),
+    (r"(\d+)\s*g\b", r"\1 gramů"),
+    (r"(\d+)\s*l\b", r"\1 litrů"),
+    (r"(\d+)\s*ml\b", r"\1 mililitrů"),
+    (r"(\d+)\s*%", r"\1 procent"),
+]
 
 # Currency patterns
 CURRENCY_PATTERNS: List[Tuple[str, str]] = [
@@ -228,6 +234,10 @@ def normalize_text(text: str) -> str:
         result = result.replace(abbr, full)
         # Also try uppercase version
         result = result.replace(abbr.upper(), full)
+    
+    # Replace measurement patterns (e.g., "5 m" -> "5 metrů")
+    for pattern, replacement in MEASUREMENT_PATTERNS:
+        result = re.sub(pattern, replacement, result)
     
     # Replace currency patterns first (before general numbers)
     for pattern, replacement in CURRENCY_PATTERNS:

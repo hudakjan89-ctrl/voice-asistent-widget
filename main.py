@@ -595,8 +595,8 @@ class VoiceSession:
         # Build URL with keywords for better recognition
         base_url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&smart_format=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
         
-        # Add keywords with very high boost for company-specific terms
-        keywords_params = "&keywords=EniQ:5&keywords=automatizace:3&keywords=digitální:2.5&keywords=procesů:2.5&keywords=firma:2&keywords=společnost:2&keywords=služby:2&keywords=Alex:2"
+        # Add keywords with very high boost for company-specific Slovak terms
+        keywords_params = "&keywords=EniQ:5&keywords=automatizácia:3&keywords=digitálny:2.5&keywords=procesov:2.5&keywords=firma:2&keywords=spoločnosť:2&keywords=služby:2&keywords=Alex:2"
         url = base_url + keywords_params
         
         logger.info(f"Connecting to Deepgram: model={DEEPGRAM_MODEL}, language={DEEPGRAM_LANGUAGE}")
@@ -761,13 +761,13 @@ class VoiceSession:
         hour = now.hour
         
         if 6 <= hour < 12:
-            greeting_text = "Dobré ráno, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
+            greeting_text = "Dobré ráno, tu Alex z EniQ. Ako vám môžem dnes pomôcť s automatizáciou vašich procesov?"
         elif 12 <= hour < 18:
-            greeting_text = "Dobré odpoledne, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
+            greeting_text = "Dobrý deň, tu Alex z EniQ. Ako vám môžem dnes pomôcť s automatizáciou vašich procesov?"
         elif 18 <= hour < 22:
-            greeting_text = "Dobrý večer, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
+            greeting_text = "Dobrý večer, tu Alex z EniQ. Ako vám môžem dnes pomôcť s automatizáciou vašich procesov?"
         else:
-            greeting_text = "Dobrou noc, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
+            greeting_text = "Dobrý večer, tu Alex z EniQ. Ako vám môžem dnes pomôcť s automatizáciou vašich procesov?"
         
         # Send greeting text directly to client (for display)
         await self.send_to_client({

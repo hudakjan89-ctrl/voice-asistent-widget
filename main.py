@@ -517,7 +517,7 @@ class VoiceSession:
                     "use_speaker_boost": True
                 },
                 "generation_config": {
-                    "chunk_length_schedule": [50, 90, 120, 150]
+                    "chunk_length_schedule": [50, 80, 100, 120]
                 },
                 "xi_api_key": ELEVENLABS_API_KEY
             }
@@ -591,8 +591,16 @@ class VoiceSession:
     async def connect_deepgram(self):
         """Establish WebSocket connection to Deepgram for STT."""
         import websockets
+        import urllib.parse
         
-        url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
+        # Keywords for better recognition of company/domain-specific terms
+        keywords = [
+            "EniQ:2", "automatizace:2", "digitální:1", "procesů:1", 
+            "firma:1", "společnost:1", "služby:1", "řešení:1"
+        ]
+        keywords_param = urllib.parse.quote(",".join(keywords))
+        
+        url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000&keywords={keywords_param}"
         
         logger.info(f"Connecting to Deepgram: model={DEEPGRAM_MODEL}, language={DEEPGRAM_LANGUAGE}")
         
@@ -744,17 +752,46 @@ class VoiceSession:
         """Generate and speak the initial greeting."""
         logger.info("Generating greeting...")
         
-        greeting_prompt = get_greeting_prompt()
-        
-        # Connect to ElevenLabs first
+        # Connect to ElevenLabs and wait for connection
         await self.connect_elevenlabs()
         
-        # Generate greeting and wait for it to complete
+        # Wait a moment for WebSocket to be fully ready
+        await asyncio.sleep(0.5)
+        
+        # Get greeting text based on time of day
+        from datetime import datetime
+        now = datetime.now()
+        hour = now.hour
+        
+        if 6 <= hour < 12:
+            greeting_text = "Dobré ráno, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
+        elif 12 <= hour < 18:
+            greeting_text = "Dobré odpoledne, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
+        elif 18 <= hour < 22:
+            greeting_text = "Dobrý večer, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
+        else:
+            greeting_text = "Dobrou noc, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
+        
+        # Send greeting text directly to client (for display)
+        await self.send_to_client({
+            "type": "assistant_text",
+            "text": greeting_text,
+            "is_final": True
+        })
+        
+        # Send greeting to TTS
         try:
-            await self.generate_llm_response(greeting_prompt, is_greeting=True)
-            logger.info("Greeting completed successfully")
+            await self.stream_to_elevenlabs(greeting_text)
+            
+            # Start receiving audio in background
+            if self.elevenlabs_ws and not self.elevenlabs_receiver_task:
+                self.elevenlabs_receiver_task = asyncio.create_task(
+                    self.receive_elevenlabs_audio()
+                )
+            
+            logger.info("Greeting sent to TTS successfully")
         except Exception as e:
-            logger.error(f"Error generating greeting: {e}")
+            logger.error(f"Error sending greeting to TTS: {e}")
         
         # Send listening status after greeting
         await self.send_to_client({"type": "listening"})

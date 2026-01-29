@@ -762,13 +762,13 @@ class VoiceSession:
         hour = now.hour
         
         if 6 <= hour < 12:
-            greeting_text = "Dobré ráno, tu Alex z EniQ. Ako vám môžem dnes pomôcť s automatizáciou vašich procesov?"
+            greeting_text = "Dobré ráno, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
         elif 12 <= hour < 18:
-            greeting_text = "Dobrý deň, tu Alex z EniQ. Ako vám môžem dnes pomôcť s automatizáciou vašich procesov?"
+            greeting_text = "Dobré odpoledne, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
         elif 18 <= hour < 22:
-            greeting_text = "Dobrý večer, tu Alex z EniQ. Ako vám môžem dnes pomôcť s automatizáciou vašich procesov?"
+            greeting_text = "Dobrý večer, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
         else:
-            greeting_text = "Dobrý večer, tu Alex z EniQ. Ako vám môžem dnes pomôcť s automatizáciou vašich procesov?"
+            greeting_text = "Dobrý večer, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
         
         # Send greeting text directly to client (for display)
         await self.send_to_client({

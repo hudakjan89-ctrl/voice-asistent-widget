@@ -517,8 +517,9 @@ class VoiceSession:
                     "use_speaker_boost": True
                 },
                 "generation_config": {
-                    "chunk_length_schedule": [120, 160, 250, 290]
-                }
+                    "chunk_length_schedule": [50, 90, 120, 150]
+                },
+                "xi_api_key": ELEVENLABS_API_KEY
             }
             await self.elevenlabs_ws.send(json.dumps(init_message))
             

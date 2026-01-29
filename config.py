@@ -75,8 +75,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", "anthropic/claude-3.5-haiku")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # ElevenLabs Configuration
-# Using Adam (free voice with multilingual support for Slovak)
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "pNInz6obpgDnclK7Ab3")  # Adam
+# Using Rachel (free voice with multilingual support for SK/CZ)
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel
 ELEVENLABS_MODEL = "eleven_multilingual_v2"  # Better for non-English languages
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
 

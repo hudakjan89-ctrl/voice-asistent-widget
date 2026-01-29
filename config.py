@@ -70,8 +70,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", "anthropic/claude-3.5-haiku")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # ElevenLabs Configuration
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-ELEVENLABS_MODEL = "eleven_turbo_v2_5"
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "e36pGtHFyzkf4HTb9rQG")
+ELEVENLABS_MODEL = "eleven_multilingual_v2"
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
 
 # Deepgram Configuration
@@ -211,7 +211,7 @@ def get_greeting_prompt() -> str:
         time_of_day = "noc"
         greeting = "Dobrý večer"
     
-    return f"Pozdrav zákazníka jednou krátkou větou. Je {time_of_day}. Řekni '{greeting}' a zeptej se jak můžeš dnes pomoci. Nepředstavuj se jménem. Příklad: '{greeting}, jak vám dnes mohu pomoci?'"
+    return f"Pozdrav zákazníka PŘESNĚ takto: '{greeting}, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?'"
 
 
 def get_system_prompt() -> str:

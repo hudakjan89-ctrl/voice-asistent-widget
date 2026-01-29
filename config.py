@@ -17,6 +17,11 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")  # For Whisper STT
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 
+# Backwards compatibility aliases (main.py still uses old names)
+DEEPGRAM_API_KEY = GROQ_API_KEY
+DEEPGRAM_MODEL = "nova-3"  # Not used, but kept for compatibility
+DEEPGRAM_LANGUAGE = "sk"  # Not used, but kept for compatibility
+
 
 from errors import ConfigurationError
 

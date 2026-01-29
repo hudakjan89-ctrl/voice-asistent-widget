@@ -254,6 +254,7 @@ class VoiceSession:
         self.is_listening = True  # Accepting user audio
         self.should_interrupt = False  # Barge-in detected
         self.session_active = True  # Session is still active
+        self.detected_language = "cs"  # Default to Czech, will auto-detect from STT
         
         # Async tasks and connections
         self.deepgram_ws: Optional[WebSocket] = None
@@ -756,11 +757,13 @@ class VoiceSession:
         # Wait a moment for WebSocket to be fully ready
         await asyncio.sleep(0.5)
         
-        # Get greeting text based on time of day
+        # Get greeting text based on time of day and language (default Czech)
         from datetime import datetime
         now = datetime.now()
         hour = now.hour
+        lang = self.detected_language  # Will auto-detect from first user input
         
+        # Default greeting in Czech (will switch to Slovak if detected)
         if 6 <= hour < 12:
             greeting_text = "Dobré ráno, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
         elif 12 <= hour < 18:

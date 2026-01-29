@@ -593,10 +593,11 @@ class VoiceSession:
         import websockets
         
         # Build URL with keywords for better recognition
+        # Note: Using only non-diacritic keywords to avoid URL encoding issues
         base_url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&smart_format=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
         
-        # Add keywords with very high boost for company-specific Slovak terms
-        keywords_params = "&keywords=EniQ:5&keywords=automatizácia:3&keywords=digitálny:2.5&keywords=procesov:2.5&keywords=firma:2&keywords=spoločnosť:2&keywords=služby:2&keywords=Alex:2"
+        # Add keywords without Slovak diacritics (EniQ, Alex, firma)
+        keywords_params = "&keywords=EniQ:5&keywords=automatizacia:3&keywords=digitalny:2.5&keywords=procesov:2.5&keywords=firma:2&keywords=spolocnost:2&keywords=sluzby:2&keywords=Alex:2"
         url = base_url + keywords_params
         
         logger.info(f"Connecting to Deepgram: model={DEEPGRAM_MODEL}, language={DEEPGRAM_LANGUAGE}")

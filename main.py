@@ -517,7 +517,7 @@ class VoiceSession:
                     "use_speaker_boost": True
                 },
                 "generation_config": {
-                    "chunk_length_schedule": [50, 80, 100, 120]
+                    "chunk_length_schedule": [40, 60, 80, 100]
                 },
                 "xi_api_key": ELEVENLABS_API_KEY
             }
@@ -595,8 +595,8 @@ class VoiceSession:
         # Build URL with keywords for better recognition
         base_url = f"wss://api.deepgram.com/v1/listen?model={DEEPGRAM_MODEL}&language={DEEPGRAM_LANGUAGE}&punctuate=true&endpointing=300&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000"
         
-        # Add keywords for company-specific terms (correct format: &keywords=word:boost)
-        keywords_params = "&keywords=EniQ:2&keywords=automatizace:1.5&keywords=digitální:1&keywords=procesů:1"
+        # Add keywords for company-specific terms with higher boost values
+        keywords_params = "&keywords=EniQ:3&keywords=automatizace:2&keywords=digitální:2&keywords=procesů:2&keywords=firma:1.5&keywords=společnost:1.5&keywords=služby:1.5"
         url = base_url + keywords_params
         
         logger.info(f"Connecting to Deepgram: model={DEEPGRAM_MODEL}, language={DEEPGRAM_LANGUAGE}")

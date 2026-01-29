@@ -277,6 +277,7 @@
         let isActive = false;
         let audioQueue = [];
         let isPlayingAudio = false;
+        let assistantIsSpeaking = false;  // Track if assistant is speaking to pause mic
         let currentUserText = '';
         let currentAssistantText = '';
 
@@ -425,10 +426,12 @@
         function playNextInQueue() {
             if (audioQueue.length > 0) {
                 isPlayingAudio = true;
+                assistantIsSpeaking = true;  // Pause microphone while speaking
                 const audioData = audioQueue.shift();
                 playAudioChunk(audioData);
             } else {
                 isPlayingAudio = false;
+                assistantIsSpeaking = false;  // Resume microphone
                 if (isActive) {
                     setStatus('listening', 'Poslouchám...');
                 }
@@ -439,6 +442,7 @@
         function clearAudioQueue() {
             audioQueue = [];
             isPlayingAudio = false;
+            assistantIsSpeaking = false;  // Resume microphone after barge-in
             // Stop any currently playing audio would require more complex handling
             log('Audio buffer cleared (barge-in)', 'success');
         }
@@ -491,6 +495,11 @@
                     if (audioChunkCount > 0 && audioChunkCount % 100 === 0) {
                         log(`Audio not sent: active=${isActive}, ws=${websocket?.readyState}`, 'error');
                     }
+                    return;
+                }
+
+                // Don't send audio while assistant is speaking (prevents echo/feedback)
+                if (assistantIsSpeaking) {
                     return;
                 }
 

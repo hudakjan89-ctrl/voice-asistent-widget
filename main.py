@@ -175,6 +175,8 @@ class VoiceSession:
         
         # Text accumulator for TTS pipeline
         self.pending_text = ""
+        self.first_sentence_buffer = ""  # Buffer for complete first sentence
+        self.first_sentence_sent = False  # Track if first sentence was sent
         
         # VAD (Voice Activity Detection) for silence timeout
         self.last_speech_time = time.time()
@@ -315,6 +317,10 @@ class VoiceSession:
             
             logger.info(f"🧠 LLM (Llama 3.1 70B) generating response for: {user_text[:50]}...")
             
+            # Reset first sentence tracking for new response
+            self.first_sentence_sent = False
+            self.first_sentence_buffer = ""
+            
             stream = await openai_client.chat.completions.create(
                 model=LLM_MODEL,
                 messages=messages,
@@ -386,8 +392,50 @@ class VoiceSession:
     async def send_text_to_tts(self, text: str):
         """
         Accumulate text and send to TTS when we have enough for natural speech.
-        Ultra-fast chunking for minimal latency.
+        CRITICAL: Buffer FIRST sentence completely before sending (for faster audio start).
         """
+        # CRITICAL: If first sentence not sent yet, accumulate in separate buffer
+        if not self.first_sentence_sent:
+            self.first_sentence_buffer += text
+            
+            # Check if we have complete first sentence (ends with . ! ?)
+            sentence_endings = [".", "!", "?"]
+            has_sentence_end = any(ending in self.first_sentence_buffer for ending in sentence_endings)
+            
+            if has_sentence_end:
+                # Found end of first sentence! Send it NOW
+                # Find the actual end position
+                end_pos = -1
+                for ending in sentence_endings:
+                    pos = self.first_sentence_buffer.find(ending)
+                    if pos != -1 and (end_pos == -1 or pos < end_pos):
+                        end_pos = pos
+                
+                # Extract first sentence + punctuation
+                first_sentence = self.first_sentence_buffer[:end_pos + 1]
+                remainder = self.first_sentence_buffer[end_pos + 1:]
+                
+                logger.info(f"🎯 FIRST SENTENCE COMPLETE: '{first_sentence}' ({len(first_sentence)} chars)")
+                logger.info(f"📝 Sending COMPLETE first sentence to TTS for ultra-fast audio start!")
+                
+                # Send first sentence to TTS
+                normalized_text = normalize_text(first_sentence)
+                await self.stream_to_elevenlabs(normalized_text)
+                
+                # Mark first sentence as sent
+                self.first_sentence_sent = True
+                
+                # Move remainder to pending_text for normal streaming
+                self.pending_text = remainder
+                self.first_sentence_buffer = ""
+                
+                return
+            else:
+                # Still accumulating first sentence, don't send yet
+                logger.debug(f"📦 Buffering first sentence: '{self.first_sentence_buffer[:30]}...' ({len(self.first_sentence_buffer)} chars)")
+                return
+        
+        # After first sentence, stream normally
         self.pending_text += text
         
         # Send on sentence boundaries for natural speech
@@ -417,6 +465,14 @@ class VoiceSession:
     
     async def flush_tts_buffer(self):
         """Flush any remaining text in the TTS buffer."""
+        # Flush first sentence buffer if not sent yet
+        if self.first_sentence_buffer.strip():
+            logger.info(f"📝 Flushing first sentence buffer: '{self.first_sentence_buffer}'")
+            normalized_text = normalize_text(self.first_sentence_buffer)
+            self.first_sentence_buffer = ""
+            await self.stream_to_elevenlabs(normalized_text)
+        
+        # Flush pending text
         if self.pending_text.strip():
             normalized_text = normalize_text(self.pending_text)
             self.pending_text = ""

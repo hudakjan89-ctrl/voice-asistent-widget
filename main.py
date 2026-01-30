@@ -820,16 +820,37 @@ class VoiceSession:
                         if self.is_speaking:
                             await self.handle_barge_in()
                         
-                        # CRITICAL: Wait 2.0s before responding to accumulate full sentence
-                        # Google STT sends is_final=True at EVERY pause, we need to collect ALL parts
-                        logger.debug("⏳ Waiting 2.0s to accumulate complete sentence...")
-                        await asyncio.sleep(2.0)
+                        # CRITICAL: Smart VAD - wait for silence with polling
+                        # Google STT sends is_final=True at EVERY pause, we need to wait for REAL silence
+                        # Wait up to 3 seconds, checking every 100ms if user continues speaking
+                        logger.debug("⏳ Waiting for silence (checking every 100ms, max 3s)...")
                         
-                        # Check if user started speaking again during the wait
-                        time_since_last_final = time.time() - self.last_final_time
-                        if time_since_last_final < 1.8:
-                            logger.debug("🔄 User continued speaking, continuing accumulation...")
-                            continue
+                        silence_start = time.time()
+                        required_silence = 0.8  # Require 0.8s of silence
+                        max_wait = 3.0  # Max 3s total wait
+                        
+                        while True:
+                            await asyncio.sleep(0.1)  # Check every 100ms
+                            
+                            current_time = time.time()
+                            time_since_last_speech = current_time - self.last_speech_time
+                            total_wait_time = current_time - silence_start
+                            
+                            # If user spoke recently, reset silence timer
+                            if time_since_last_speech < required_silence:
+                                logger.debug(f"🔄 User still speaking (last speech {time_since_last_speech:.1f}s ago)")
+                                silence_start = current_time  # Reset silence timer
+                                continue
+                            
+                            # If we have enough silence, send to LLM
+                            if time_since_last_speech >= required_silence:
+                                logger.info(f"✅ Silence detected ({time_since_last_speech:.1f}s), sending to LLM")
+                                break
+                            
+                            # Timeout after max_wait
+                            if total_wait_time >= max_wait:
+                                logger.info(f"⏱️ Max wait time reached ({max_wait}s), sending to LLM")
+                                break
                         
                         # User finished! Send accumulated transcript to LLM
                         if self.accumulated_transcript.strip():

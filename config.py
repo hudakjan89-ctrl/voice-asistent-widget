@@ -147,10 +147,11 @@ ELEVENLABS_OUTPUT_FORMAT = "pcm_24000"  # PCM 24kHz 16-bit mono
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&optimize_streaming_latency={latency}&output_format={output_format}&auto_mode=true"
 
 # Google Cloud Speech V2 Configuration
-# CRITICAL: Using global location + "long" model to support multiple languages (sk-SK, cs-CZ)
-GOOGLE_SPEECH_MODEL = "long"  # Standard V2 model - works in global, supports multi-language
-GOOGLE_SPEECH_LANGUAGES = ["sk-SK", "cs-CZ"]  # Support both Slovak and Czech
-GOOGLE_SPEECH_LANGUAGE_CODES = ["sk", "cs"]  # For auto-detection
+# CRITICAL: Using us-central1 location + "chirp_2" model for optimized Slovak/Czech recognition
+GOOGLE_SPEECH_LOCATION = "us-central1"  # Required for Chirp 2 model
+GOOGLE_SPEECH_MODEL = "chirp_2"  # Optimized for Slovak/Czech, far-field audio
+GOOGLE_SPEECH_LANGUAGES = ["sk-SK"]  # Primary language (Chirp 2 in us-central1 may not support multi-language)
+GOOGLE_SPEECH_LANGUAGE_CODES = ["sk"]  # For auto-detection
 
 # Phrase adaptation for better recognition of company-specific terms
 # Boost: 20.0 = High priority for these exact phrases

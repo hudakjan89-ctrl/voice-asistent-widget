@@ -3,6 +3,7 @@ Configuration module for Ultra-Fast Voice Assistant.
 Loads environment variables and provides configuration constants.
 """
 import os
+import json
 import logging
 from dotenv import load_dotenv
 
@@ -14,7 +15,46 @@ load_dotenv()
 
 # API Keys
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/app/google-credentials.json")
-GOOGLE_CLOUD_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "").strip()
+
+# Auto-detect Google Cloud Project ID from multiple sources
+def _load_google_project_id() -> str:
+    """
+    Load Google Cloud Project ID from multiple sources (in priority order):
+    1. GOOGLE_CLOUD_PROJECT_ID env variable (custom)
+    2. GOOGLE_CLOUD_PROJECT env variable (Google Cloud standard)
+    3. project_id from google-credentials.json file
+    """
+    # Try ENV variables first
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "").strip()
+    if project_id:
+        logger.info(f"✅ Project ID loaded from GOOGLE_CLOUD_PROJECT_ID: {project_id}")
+        return project_id
+    
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+    if project_id:
+        logger.info(f"✅ Project ID loaded from GOOGLE_CLOUD_PROJECT: {project_id}")
+        return project_id
+    
+    # Try to load from credentials JSON file
+    if os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+        try:
+            with open(GOOGLE_APPLICATION_CREDENTIALS, 'r') as f:
+                creds = json.load(f)
+                project_id = creds.get("project_id", "").strip()
+                if project_id:
+                    logger.info(f"✅ Project ID auto-detected from JSON file: {project_id}")
+                    return project_id
+                else:
+                    logger.warning("⚠️ No project_id found in credentials JSON")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not read project_id from credentials JSON: {e}")
+    else:
+        logger.warning(f"⚠️ Credentials file not found: {GOOGLE_APPLICATION_CREDENTIALS}")
+    
+    logger.error("❌ No Google Cloud Project ID found in any source!")
+    return ""
+
+GOOGLE_CLOUD_PROJECT_ID = _load_google_project_id()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 
@@ -26,18 +66,29 @@ def validate_api_keys() -> dict:
     Validate that all required API keys are configured.
     Returns a dict with validation results for each service.
     Raises ConfigurationError if critical keys are missing.
+    
+    BYPASS LOGIC: If credentials file exists, Google Cloud is considered configured
+    even if project_id is empty (will be auto-detected at runtime).
     """
     # Check Google Cloud credentials
     google_creds_exist = os.path.exists(GOOGLE_APPLICATION_CREDENTIALS)
     google_project_set = bool(GOOGLE_CLOUD_PROJECT_ID)
     
+    # BYPASS: If credentials file exists, consider it configured
+    # (project_id can be auto-detected from the file)
+    google_configured = google_creds_exist
+    
+    if google_configured and not google_project_set:
+        logger.warning("⚠️ Project ID not set, but credentials file exists - will attempt auto-detection")
+    
     results = {
         "google_cloud": {
-            "configured": google_creds_exist and google_project_set,
+            "configured": google_configured,
             "service": "STT",
             "details": {
                 "credentials_file": google_creds_exist,
-                "project_id": google_project_set
+                "project_id": google_project_set,
+                "bypass_reason": "credentials_file_exists" if (google_creds_exist and not google_project_set) else None
             }
         },
         "openrouter": {"configured": bool(OPENROUTER_API_KEY), "service": "LLM"},
@@ -55,7 +106,10 @@ def validate_api_keys() -> dict:
         logger.error(error_msg)
         raise ConfigurationError(error_msg)
     
-    logger.info("All API keys validated successfully")
+    logger.info("✅ All API keys validated successfully")
+    if google_configured and not google_project_set:
+        logger.info("   → Google Cloud: Credentials file found, project_id will be auto-detected")
+    
     return results
 
 

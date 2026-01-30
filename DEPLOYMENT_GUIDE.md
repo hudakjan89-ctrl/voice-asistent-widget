@@ -77,7 +77,11 @@ Choď do **Environment** tab a pridaj:
 
 # Google Cloud
 GOOGLE_APPLICATION_CREDENTIALS=/app/google-credentials.json
-GOOGLE_CLOUD_PROJECT_ID=tvoj-project-id-z-kroku-1
+
+# Google Cloud Project ID (use either of these - both work, will auto-detect from JSON if missing)
+GOOGLE_CLOUD_PROJECT=tvoj-project-id-z-kroku-1
+# OR use this (both work):
+# GOOGLE_CLOUD_PROJECT_ID=tvoj-project-id-z-kroku-1
 
 # OpenRouter (už máš)
 OPENROUTER_API_KEY=sk_or_v1_xxxxx

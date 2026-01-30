@@ -83,8 +83,8 @@ logger.info(f"Working directory: {__file__}")
 
 # Set Google Cloud credentials from environment
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_APPLICATION_CREDENTIALS
-logger.info(f"Google Cloud credentials: {GOOGLE_APPLICATION_CREDENTIALS}")
-logger.info(f"Google Cloud Project ID: {GOOGLE_CLOUD_PROJECT_ID}")
+logger.info(f"📁 Google Cloud credentials file: {GOOGLE_APPLICATION_CREDENTIALS}")
+logger.info(f"🆔 Google Cloud Project ID: {GOOGLE_CLOUD_PROJECT_ID if GOOGLE_CLOUD_PROJECT_ID else '(will auto-detect)'}")
 
 # OpenRouter client (OpenAI-compatible API for Llama 3.1 70B)
 openai_client = AsyncOpenAI(

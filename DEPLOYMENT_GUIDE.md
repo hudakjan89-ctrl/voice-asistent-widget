@@ -87,8 +87,8 @@ ELEVENLABS_API_KEY=sk_xxxxx
 
 # ========== OPTIONAL ==========
 
-# LLM Model (default: Llama 3.3 70B)
-LLM_MODEL=meta-llama/llama-3.3-70b-instruct:free
+# LLM Model (default: Llama 3.1 70B via OpenRouter)
+LLM_MODEL=meta-llama/llama-3.1-70b-instruct
 
 # Voice (default: Adam)
 ELEVENLABS_VOICE_ID=pNInz6obpg8ndclK7Ab3
@@ -122,9 +122,11 @@ curl https://tvoja-domena.duckdns.org/health
   "status": "healthy",
   "service": "ultra-fast-voice-assistant",
   "config": {
-    "llm_model": "meta-llama/llama-3.3-70b-instruct:free",
+    "llm_model": "meta-llama/llama-3.1-70b-instruct",
+    "llm_provider": "OpenRouter",
     "stt_service": "Google Cloud Speech V2 (Chirp 2)",
     "stt_languages": "sk-SK, cs-CZ (auto-detect)",
+    "google_project_id": "your-project-id",
     "api_keys_configured": {
       "google_cloud": true,
       "openrouter": true,

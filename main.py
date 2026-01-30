@@ -178,8 +178,10 @@ class VoiceSession:
         
         # VAD (Voice Activity Detection) for silence timeout
         self.last_speech_time = time.time()
+        self.last_final_time = 0.0  # Track when last is_final arrived
         self.vad_task: Optional[asyncio.Task] = None
         self.pending_transcript = ""  # Accumulate interim transcripts
+        self.accumulated_transcript = ""  # Accumulate multiple is_final transcripts
         
         # Session statistics
         self.stats = {
@@ -721,39 +723,71 @@ class VoiceSession:
                     logger.debug(f"📝 Transcript ({'final' if is_final else 'interim'}): {transcript}")
                     
                     if is_final:
-                        # Reset VAD timer on final transcript
+                        # Update speech time
                         self.last_speech_time = time.time()
-                        self.pending_transcript = ""
+                        self.last_final_time = time.time()
                         
-                        # Send final transcript to client
+                        # CRITICAL FIX: Use LONGEST transcript (interim or final)
+                        # Google STT sometimes sends better interim than final!
+                        best_transcript = transcript.strip()
+                        if len(self.pending_transcript) > len(best_transcript):
+                            best_transcript = self.pending_transcript.strip()
+                            logger.debug(f"📝 Using interim transcript (longer): '{best_transcript}'")
+                        
+                        # Add to accumulated transcript (join multiple is_final chunks)
+                        if self.accumulated_transcript:
+                            # Check if new transcript is extension or new sentence
+                            if best_transcript.lower().startswith(self.accumulated_transcript.lower()[:10]):
+                                # Replacement (longer version of same sentence)
+                                self.accumulated_transcript = best_transcript
+                            else:
+                                # Continuation (new sentence part)
+                                self.accumulated_transcript += " " + best_transcript
+                        else:
+                            self.accumulated_transcript = best_transcript
+                        
+                        logger.info(f"🎯 Final transcript ({language}): {transcript}")
+                        logger.info(f"📝 Accumulated: '{self.accumulated_transcript}'")
+                        
+                        # Send accumulated transcript to client (visual feedback)
                         await self.send_to_client({
                             "type": "user_text",
-                            "text": transcript,
+                            "text": self.accumulated_transcript,
                             "is_final": True,
                             "language": language
                         })
+                        
+                        # Reset pending
+                        self.pending_transcript = ""
                         
                         # Check if bot is speaking (barge-in detection)
                         if self.is_speaking:
                             await self.handle_barge_in()
                         
-                        # CRITICAL: Wait 1.5s before responding to avoid jumping in too early
-                        # Google STT sends is_final=True quickly, but user might continue speaking
-                        # This gives user time to continue their thought/sentence
-                        logger.info(f"🎯 Final transcript ({language}): {transcript}")
-                        logger.debug("⏳ Waiting 1.5s to ensure user finished speaking...")
-                        await asyncio.sleep(1.5)
+                        # CRITICAL: Wait 2.0s before responding to accumulate full sentence
+                        # Google STT sends is_final=True at EVERY pause, we need to collect ALL parts
+                        logger.debug("⏳ Waiting 2.0s to accumulate complete sentence...")
+                        await asyncio.sleep(2.0)
                         
                         # Check if user started speaking again during the wait
-                        time_since_last_speech = time.time() - self.last_speech_time
-                        if time_since_last_speech < 1.2:
-                            logger.debug("🔄 User continued speaking, skipping response")
+                        time_since_last_final = time.time() - self.last_final_time
+                        if time_since_last_final < 1.8:
+                            logger.debug("🔄 User continued speaking, continuing accumulation...")
                             continue
                         
-                        # Send to LLM for response
-                        self.current_response_task = asyncio.create_task(
-                            self.generate_llm_response(transcript.strip())
-                        )
+                        # User finished! Send accumulated transcript to LLM
+                        if self.accumulated_transcript.strip():
+                            logger.info(f"✅ SENDING TO LLM ({language}): '{self.accumulated_transcript}'")
+                            
+                            # Send to LLM for response
+                            self.current_response_task = asyncio.create_task(
+                                self.generate_llm_response(self.accumulated_transcript.strip())
+                            )
+                            
+                            # Reset accumulator
+                            self.accumulated_transcript = ""
+                        else:
+                            logger.debug("⚠️ Accumulated transcript empty, skipping LLM")
                     else:
                         # Interim transcript - accumulate for VAD
                         self.pending_transcript = transcript

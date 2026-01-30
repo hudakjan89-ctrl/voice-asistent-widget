@@ -639,7 +639,7 @@ class VoiceSession:
             
             # Configure streaming with VAD settings
             # CRITICAL: enable_voice_activity_events=True for reliable VAD!
-            # CRITICAL: speech_end_timeout=1.5s allows far-field mic and long phrases
+            # CRITICAL: speech_end_timeout=2.5s allows slow speech and long phrases
             streaming_config = cloud_speech.StreamingRecognitionConfig(
                 config=recognition_config,
                 streaming_features=cloud_speech.StreamingRecognitionFeatures(
@@ -648,12 +648,12 @@ class VoiceSession:
                     # VAD (Voice Activity Detection) settings for far-field microphone
                     voice_activity_timeout=cloud_speech.StreamingRecognitionFeatures.VoiceActivityTimeout(
                         speech_start_timeout={"seconds": 5},  # Wait up to 5s for speech to start
-                        speech_end_timeout={"seconds": 1, "nanos": 500000000},  # 1.5s of silence = end
+                        speech_end_timeout={"seconds": 2, "nanos": 500000000},  # 2.5s of silence = end
                     ),
                 ),
             )
             
-            logger.info(f"🎤 VAD configured: enable_voice_activity_events=True, speech_end_timeout=1.5s")
+            logger.info(f"🎤 VAD configured: enable_voice_activity_events=True, speech_end_timeout=2.5s")
             
             # Store config for request generator
             self.streaming_config = streaming_config
@@ -676,7 +676,7 @@ class VoiceSession:
             self.vad_task = asyncio.create_task(self.monitor_vad())
             
             logger.info(f"✅ Google Speech V2 (latest_short model) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
-            logger.info(f"✅ Config: GLOBAL endpoint, VAD_events=ON, timeout=1.5s, Multi-language=sk-SK+cs-CZ")
+            logger.info(f"✅ Config: GLOBAL endpoint, VAD_events=ON, timeout=2.5s, Single-language=sk-SK")
             
         except Exception as e:
             logger.error(f"❌ Error initializing Google Speech: {e}")
@@ -828,17 +828,21 @@ class VoiceSession:
                             continue
                         
                         if is_final:
-                            # STORE final transcript in buffer (don't send to LLM yet!)
-                            final_sentence_buffer = transcript  # Replace with latest
+                            # ACCUMULATE final transcripts in buffer (don't send to LLM yet!)
+                            # CRITICAL: Append to buffer, don't replace! User may speak in multiple chunks.
+                            if final_sentence_buffer:
+                                final_sentence_buffer += " " + transcript
+                            else:
+                                final_sentence_buffer = transcript
                             last_final_time = time.time()
                             
                             logger.info(f"🎤 Google STT [FINAL] ({current_language}): {transcript}")
-                            logger.debug(f"📦 Buffered (waiting for SPEECH_END or 1.2s): '{final_sentence_buffer}'")
+                            logger.debug(f"📦 Accumulated buffer (waiting for SPEECH_END or 1.2s): '{final_sentence_buffer}'")
                             
-                            # Send to client for UI feedback
+                            # Send accumulated buffer to client for UI feedback (not just latest chunk!)
                             await self.send_to_client({
                                 "type": "user_text",
-                                "text": transcript,
+                                "text": final_sentence_buffer,
                                 "is_final": True,
                                 "language": current_language
                             })

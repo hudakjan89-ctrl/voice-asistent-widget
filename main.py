@@ -10,6 +10,7 @@ import sys
 import traceback
 import time
 import os
+import base64
 from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -536,13 +537,37 @@ class VoiceSession:
                             logger.info(f"📦 Received {self.stats['audio_chunks_received']} audio chunks from ElevenLabs")
                             
                     elif isinstance(message, str):
-                        # JSON metadata (acknowledgments, errors, etc.)
+                        # JSON metadata or base64-encoded audio
                         try:
                             data = json.loads(message)
+                            
+                            # Check for error
                             if "error" in data and data["error"]:
                                 logger.error(f"❌ ElevenLabs error: {data['error']}")
+                                continue
+                            
+                            # CRITICAL: ElevenLabs sends PCM audio as base64 in JSON!
+                            if "audio" in data and data["audio"]:
+                                audio_base64 = data["audio"]
+                                
+                                # Decode base64 to raw PCM bytes
+                                try:
+                                    pcm_bytes = base64.b64decode(audio_base64)
+                                    chunk_size = len(pcm_bytes)
+                                    logger.info(f"🔊 Decoded base64 audio from ElevenLabs: {chunk_size} bytes PCM")
+                                    
+                                    # Send to client
+                                    await self.send_audio_to_client(pcm_bytes)
+                                    self.stats["audio_chunks_received"] += 1
+                                    
+                                    if self.stats["audio_chunks_received"] % 10 == 0:
+                                        logger.info(f"📦 Received {self.stats['audio_chunks_received']} audio chunks from ElevenLabs")
+                                except Exception as decode_err:
+                                    logger.error(f"❌ Failed to decode base64 audio: {decode_err}")
                             else:
+                                # Regular metadata (isFinal, alignment, etc.)
                                 logger.debug(f"📨 ElevenLabs metadata: {data}")
+                        
                         except Exception as e:
                             logger.warning(f"⚠️ Non-JSON text message from ElevenLabs: {message[:100]}")
                     else:

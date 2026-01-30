@@ -672,8 +672,11 @@
                 
                 websocket.onmessage = async (event) => {
                     if (event.data instanceof Blob) {
-                        // Binary audio data
+                        // Binary audio data from ElevenLabs
+                        console.log(`🎵 RECEIVED AUDIO CHUNK: ${event.data.size} bytes (Blob)`);
+                        log(`🎵 Received audio chunk: ${event.data.size} bytes`, 'success');
                         const arrayBuffer = await event.data.arrayBuffer();
+                        console.log(`🎵 Converted to ArrayBuffer: ${arrayBuffer.byteLength} bytes`);
                         queueAudio(arrayBuffer);
                     } else {
                         // JSON message

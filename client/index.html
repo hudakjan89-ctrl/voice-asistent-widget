@@ -495,7 +495,8 @@
 
         /**
          * Queue audio chunk for playback
-         * Chunks are played sequentially without gaps
+         * CRITICAL: ElevenLabs sends PCM 24kHz 16-bit mono
+         * We must convert Int16 → Float32 for Web Audio API
          */
         async function queueAudioChunk(arrayBuffer) {
             if (!audioContext) {
@@ -507,14 +508,34 @@
             const chunkId = audioChunkCounter;
             const size = arrayBuffer.byteLength;
             
-            console.log(`🎵 [Chunk #${chunkId}] Received: ${size} bytes`);
+            console.log(`🎵 [Chunk #${chunkId}] Received: ${size} bytes (PCM 24kHz 16-bit)`);
             log(`📥 Audio chunk #${chunkId}: ${size} bytes`, 'success');
             
             try {
-                // Decode MP3 audio data to AudioBuffer
-                console.log(`🔄 [Chunk #${chunkId}] Decoding...`);
-                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-                console.log(`✅ [Chunk #${chunkId}] Decoded: duration=${audioBuffer.duration.toFixed(3)}s, channels=${audioBuffer.numberOfChannels}`);
+                // PCM 24kHz 16-bit mono format from ElevenLabs
+                const sampleRate = 24000;
+                const numChannels = 1;
+                
+                // Convert raw PCM Int16 to Float32 array
+                console.log(`🔄 [Chunk #${chunkId}] Converting PCM Int16 → Float32...`);
+                const int16Array = new Int16Array(arrayBuffer);
+                const float32Array = new Float32Array(int16Array.length);
+                
+                // CRITICAL: Convert Int16 (-32768 to 32767) to Float32 (-1.0 to 1.0)
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32768.0;
+                }
+                
+                console.log(`✅ [Chunk #${chunkId}] Converted ${int16Array.length} samples`);
+                
+                // Create AudioBuffer manually
+                const numSamples = float32Array.length;
+                const duration = numSamples / sampleRate;
+                
+                const audioBuffer = audioContext.createBuffer(numChannels, numSamples, sampleRate);
+                audioBuffer.getChannelData(0).set(float32Array);
+                
+                console.log(`✅ [Chunk #${chunkId}] Created AudioBuffer: duration=${duration.toFixed(3)}s, samples=${numSamples}, rate=${sampleRate}Hz`);
                 
                 // Create audio source
                 const source = audioContext.createBufferSource();
@@ -530,7 +551,7 @@
                 console.log(`▶️ [Chunk #${chunkId}] Scheduled at ${startTime.toFixed(3)}s (now=${now.toFixed(3)}s)`);
                 
                 // Update next start time for next chunk
-                nextStartTime = startTime + audioBuffer.duration;
+                nextStartTime = startTime + duration;
                 console.log(`⏭️ Next chunk will start at ${nextStartTime.toFixed(3)}s`);
                 
                 // Update UI

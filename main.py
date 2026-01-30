@@ -38,6 +38,7 @@ from config import (
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     ELEVENLABS_MODEL,
+    ELEVENLABS_OUTPUT_FORMAT,
     ELEVENLABS_WS_URL,
     ELEVENLABS_OPTIMIZE_LATENCY,
     LLM_MODEL,
@@ -432,11 +433,13 @@ class VoiceSession:
         url = ELEVENLABS_WS_URL.format(
             voice_id=ELEVENLABS_VOICE_ID,
             model_id=ELEVENLABS_MODEL,
-            latency=ELEVENLABS_OPTIMIZE_LATENCY
+            latency=ELEVENLABS_OPTIMIZE_LATENCY,
+            output_format=ELEVENLABS_OUTPUT_FORMAT
         )
         
         try:
-            logger.info("🔌 Connecting to ElevenLabs WebSocket...")
+            logger.info(f"🔌 Connecting to ElevenLabs WebSocket (output_format={ELEVENLABS_OUTPUT_FORMAT})...")
+            logger.debug(f"   URL: {url}")
             self.elevenlabs_ws = await websockets.connect(
                 url,
                 extra_headers={"xi-api-key": ELEVENLABS_API_KEY}

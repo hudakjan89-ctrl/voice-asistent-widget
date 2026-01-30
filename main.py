@@ -621,21 +621,41 @@ class VoiceSession:
             self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_SPEECH_LOCATION}/recognizers/_"
             logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
+            # Configure Speech Adaptation for "EniQ" keyword
+            # CRITICAL: Boost "EniQ" with weight 20.0 to prevent mis-transcriptions
+            try:
+                phrase_set = cloud_speech.PhraseSet(
+                    phrases=[
+                        cloud_speech.PhraseSet.Phrase(value="EniQ", boost=20.0),
+                    ]
+                )
+                
+                adaptation = cloud_speech.SpeechAdaptation(
+                    phrase_sets=[
+                        cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
+                            inline_phrase_set=phrase_set
+                        )
+                    ]
+                )
+                logger.info(f"🎯 Speech Adaptation enabled: EniQ (boost=20.0)")
+            except Exception as adapt_err:
+                logger.warning(f"⚠️ Could not enable adaptation: {adapt_err}. Continuing without it.")
+                adaptation = None
+            
             # Configure recognition with latest_short model
-            # CRITICAL: Minimal config - latest_short model optimized for conversations
+            # CRITICAL: Slovak ONLY to prevent language-mix hallucinations
             recognition_config = cloud_speech.RecognitionConfig(
                 explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
                     encoding=cloud_speech.ExplicitDecodingConfig.AudioEncoding.LINEAR16,
                     sample_rate_hertz=AUDIO_SAMPLE_RATE,
                     audio_channel_count=AUDIO_CHANNELS,
                 ),
-                language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK, cs-CZ
+                language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK ONLY
                 model=GOOGLE_SPEECH_MODEL,  # latest_short
-                # NO features block - latest_short requires minimal config
-                # NO adaptation block - latest_short requires minimal config
+                adaptation=adaptation if adaptation else None,  # Phrase boost for "EniQ"
             )
             
-            logger.info(f"⚙️ Using latest_short model with MINIMAL config (GLOBAL endpoint, multi-language)")
+            logger.info(f"⚙️ Using latest_short model (GLOBAL endpoint, Slovak ONLY, EniQ boost)")
             
             # Configure streaming with VAD settings
             # CRITICAL: enable_voice_activity_events=True for reliable VAD!
@@ -757,7 +777,10 @@ class VoiceSession:
         logger.info("🎧 Google STT receiver wrapper exiting")
     
     async def receive_google_transcripts(self):
-        """Receive and process transcripts from Google Speech V2 with proper error handling."""
+        """
+        Receive and process transcripts from Google Speech V2 - ANTI-BLBNUTIE VERSION.
+        CRITICAL: Uses SPEECH_END event + 1.2s debounce to prevent fragmented/duplicated input.
+        """
         try:
             # CRITICAL FIX: In Speech V2 API, streaming_recognize may return a coroutine
             # Check if it's a coroutine and await it first to get the actual async iterator
@@ -766,139 +789,123 @@ class VoiceSession:
                 logger.debug("⚠️ speech_stream is coroutine, awaiting to get async iterator...")
                 self.speech_stream = await self.speech_stream
             
-            logger.info("🎧 Starting Google STT transcript receiver loop...")
+            logger.info("🎧 Starting Google STT transcript receiver loop (ANTI-BLBNUTIE MODE)...")
             response_count = 0
+            
+            # CRITICAL: Final transcript buffer - stores is_final transcripts until SPEECH_END
+            final_sentence_buffer = ""
+            last_final_time = 0.0
+            current_language = "sk"
             
             # Now iterate over the async iterator
             async for response in self.speech_stream:
                 response_count += 1
-                logger.debug(f"📨 Google STT response #{response_count}")
-                
-                # DEBUG: Log full response details
-                try:
-                    num_results = len(response.results) if response.results else 0
-                    
-                    # Check for voice activity events (enabled with enable_voice_activity_events=True)
-                    speech_event_type = getattr(response, 'speech_event_type', None)
-                    speech_event_time = getattr(response, 'speech_event_time', None)
-                    
-                    if speech_event_type:
-                        logger.debug(f"🔍 Response #{response_count}: SPEECH_EVENT={speech_event_type}, time={speech_event_time}")
-                    else:
-                        logger.debug(f"🔍 Response #{response_count}: {num_results} result(s)")
-                    
-                    if num_results > 0:
-                        for idx, result in enumerate(response.results):
-                            num_alternatives = len(result.alternatives) if result.alternatives else 0
-                            logger.debug(f"  └─ Result[{idx}]: is_final={result.is_final}, alternatives={num_alternatives}")
-                            
-                            if num_alternatives > 0:
-                                for alt_idx, alternative in enumerate(result.alternatives):
-                                    transcript_text = alternative.transcript if hasattr(alternative, 'transcript') else "N/A"
-                                    confidence = alternative.confidence if hasattr(alternative, 'confidence') else "N/A"
-                                    logger.debug(f"      └─ Alternative[{alt_idx}]: transcript='{transcript_text}', confidence={confidence}")
-                except Exception as debug_err:
-                    logger.debug(f"⚠️ Error logging response details: {debug_err}")
                 
                 if not self.session_active:
                     logger.info(f"🛑 Session inactive, stopping STT receiver (received {response_count} responses)")
                     break
                 
+                # CRITICAL: Check for SPEECH_END event (VAD detection)
+                speech_event_type = getattr(response, 'speech_event_type', None)
+                
+                if speech_event_type:
+                    logger.info(f"🔔 SPEECH_EVENT: {speech_event_type}")
+                    
+                    # When speech ends, send buffered transcript to LLM
+                    if speech_event_type == cloud_speech.StreamingRecognizeResponse.SpeechEventType.SPEECH_ACTIVITY_END:
+                        if final_sentence_buffer.strip():
+                            logger.info(f"🎯 SPEECH_END detected! Sending to LLM: '{final_sentence_buffer}'")
+                            
+                            # Check if bot is speaking (barge-in detection)
+                            if self.is_speaking:
+                                await self.handle_barge_in()
+                            
+                            # Send to LLM
+                            await self.send_final_transcript_to_llm(final_sentence_buffer.strip(), current_language)
+                            
+                            # CLEAR buffer for next sentence
+                            final_sentence_buffer = ""
+                            last_final_time = 0.0
+                        else:
+                            logger.debug("⚠️ SPEECH_END but buffer empty, ignoring")
+                    
+                    continue  # Skip rest of processing for event-only responses
+                
+                # Process transcript results
                 for result in response.results:
                     if not result.alternatives:
-                        logger.debug("⚠️ Result has no alternatives, skipping")
                         continue
                     
-                    # Extract transcript from first alternative (best match)
-                    # Reference: https://docs.cloud.google.com/speech-to-text/docs/reference/rpc/google.cloud.speech.v2#streamingrecognizeresponse
                     try:
-                        transcript = result.alternatives[0].transcript
+                        transcript = result.alternatives[0].transcript.strip()
                         is_final = result.is_final
                         
                         # Detect language from result
-                        language_code = result.language_code if result.language_code else "cs"
-                        language = language_code.split("-")[0]  # sk-SK -> sk
-                        self.current_language = language
+                        language_code = result.language_code if result.language_code else "sk-SK"
+                        current_language = language_code.split("-")[0]  # sk-SK -> sk
                         
-                        # DEBUG: Confirm extraction
-                        logger.debug(f"✅ Extracted: transcript='{transcript}', is_final={is_final}, language={language}")
-                    except Exception as extract_err:
-                        logger.error(f"❌ Error extracting transcript: {extract_err}")
-                        continue
-                    
-                    # LOG: Every received transcript (both interim and final)
-                    logger.info(f"🎤 Google STT {'[FINAL]' if is_final else '[interim]'} ({language}): {transcript}")
-                    logger.debug(f"📝 Transcript ({'final' if is_final else 'interim'}): {transcript}")
-                    
-                    if is_final:
-                        # Update speech time
-                        self.last_speech_time = time.time()
-                        self.last_final_time = time.time()
+                        if not transcript:
+                            continue
                         
-                        # CRITICAL FIX: Use LONGEST transcript (interim or final)
-                        # Google STT sometimes sends better interim than final!
-                        best_transcript = transcript.strip()
-                        if len(self.pending_transcript) > len(best_transcript):
-                            best_transcript = self.pending_transcript.strip()
-                            logger.debug(f"📝 Using interim transcript (longer): '{best_transcript}'")
+                        if is_final:
+                            # STORE final transcript in buffer (don't send to LLM yet!)
+                            final_sentence_buffer = transcript  # Replace with latest
+                            last_final_time = time.time()
+                            
+                            logger.info(f"🎤 Google STT [FINAL] ({current_language}): {transcript}")
+                            logger.debug(f"📦 Buffered (waiting for SPEECH_END or 1.2s): '{final_sentence_buffer}'")
+                            
+                            # Send to client for UI feedback
+                            await self.send_to_client({
+                                "type": "user_text",
+                                "text": transcript,
+                                "is_final": True,
+                                "language": current_language
+                            })
+                            
+                            # Start 1.2s debounce timer
+                            # If no SPEECH_END arrives in 1.2s, send to LLM anyway
+                            async def debounce_send():
+                                nonlocal final_sentence_buffer  # Access outer scope
+                                await asyncio.sleep(1.2)
+                                
+                                # Check if buffer wasn't already sent by SPEECH_END
+                                if final_sentence_buffer.strip():
+                                    logger.info(f"⏱️ 1.2s debounce expired! Sending to LLM: '{final_sentence_buffer}'")
+                                    
+                                    # Check if bot is speaking (barge-in detection)
+                                    if self.is_speaking:
+                                        await self.handle_barge_in()
+                                    
+                                    # Send to LLM and CLEAR buffer
+                                    await self.send_final_transcript_to_llm(final_sentence_buffer.strip(), current_language)
+                                    final_sentence_buffer = ""  # CLEAR after sending
+                            
+                            # Cancel previous debounce timer if exists
+                            if self.input_timer and not self.input_timer.done():
+                                self.input_timer.cancel()
+                                try:
+                                    await self.input_timer
+                                except asyncio.CancelledError:
+                                    pass
+                            
+                            # Start new debounce timer
+                            self.input_timer = asyncio.create_task(debounce_send())
                         
-                        # Add to accumulated transcript (join multiple is_final chunks)
-                        if self.accumulated_transcript:
-                            # Check if new transcript is extension or new sentence
-                            if best_transcript.lower().startswith(self.accumulated_transcript.lower()[:10]):
-                                # Replacement (longer version of same sentence)
-                                self.accumulated_transcript = best_transcript
-                            else:
-                                # Continuation (new sentence part)
-                                self.accumulated_transcript += " " + best_transcript
                         else:
-                            self.accumulated_transcript = best_transcript
-                        
-                        logger.info(f"🎯 Final transcript ({language}): {transcript}")
-                        logger.info(f"📝 Accumulated so far: '{self.accumulated_transcript}'")
-                        
-                        # Send accumulated transcript to client (visual feedback)
-                        await self.send_to_client({
-                            "type": "user_text",
-                            "text": self.accumulated_transcript,
-                            "is_final": True,
-                            "language": language
-                        })
-                        
-                        # Reset pending
-                        self.pending_transcript = ""
-                        
-                        # Check if bot is speaking (barge-in detection)
-                        if self.is_speaking:
-                            await self.handle_barge_in()
-                        
-                        # CRITICAL: Timer-based Input Debouncing (1.3s patience)
-                        # Cancel any existing input timer
-                        if self.input_timer and not self.input_timer.done():
-                            logger.debug("⏱️ Cancelling previous input timer (user still speaking)")
-                            self.input_timer.cancel()
-                            try:
-                                await self.input_timer
-                            except asyncio.CancelledError:
-                                pass
-                        
-                        # Start new input timer (1.3s patience)
-                        logger.info("⏱️ Starting 1.3s input timer (waiting for user to finish)")
-                        self.input_timer = asyncio.create_task(
-                            self.wait_and_send_to_llm(language)
-                        )
-                    else:
-                        # Interim transcript - accumulate for VAD
-                        self.pending_transcript = transcript
-                        self.last_speech_time = time.time()
-                        
-                        # Send interim to client for real-time display
-                        await self.send_to_client({
-                            "type": "user_text",
-                            "text": transcript,
-                            "is_final": False,
-                            "language": language
-                        })
+                            # Interim transcript - send to UI only (NEVER to LLM!)
+                            logger.debug(f"🎤 Google STT [interim] ({current_language}): {transcript}")
+                            
+                            await self.send_to_client({
+                                "type": "user_text",
+                                "text": transcript,
+                                "is_final": False,
+                                "language": current_language
+                            })
+                    
+                    except Exception as extract_err:
+                        logger.error(f"❌ Error processing result: {extract_err}")
+                        continue
         
         except Exception as e:
             logger.error(f"❌ Error receiving Google transcripts: {e}")
@@ -908,48 +915,33 @@ class VoiceSession:
         finally:
             logger.info(f"🎧 Google STT receiver loop ENDED (processed {response_count if 'response_count' in locals() else 0} responses)")
     
-    async def wait_and_send_to_llm(self, language: str):
+    async def send_final_transcript_to_llm(self, transcript: str, language: str):
         """
-        Timer-based input debouncing: Wait 1.3s before sending to LLM.
-        If cancelled, it means user is still speaking.
+        Send final transcript to LLM (called after SPEECH_END or 1.2s debounce).
+        CRITICAL: This is the ONLY place where transcripts are sent to LLM!
         """
-        try:
-            logger.debug("⏳ Waiting 1.3s for user to finish speaking...")
-            await asyncio.sleep(1.3)
-            
-            # If we reach here, user was silent for 1.3s
-            logger.info(f"✅ User finished speaking (1.3s silence)!")
-            
-            # Send accumulated transcript to LLM
-            if self.accumulated_transcript.strip():
-                final_text = self.accumulated_transcript.strip()
-                logger.info(f"🚀 SENDING TO LLM ({language}): '{final_text}'")
-                
-                # CRITICAL: Cancel previous LLM response if still running
-                if self.current_response_task and not self.current_response_task.done():
-                    logger.warning("🛑 Cancelling previous LLM response")
-                    self.current_response_task.cancel()
-                    try:
-                        await self.current_response_task
-                    except asyncio.CancelledError:
-                        pass
-                
-                # Reset buffers
-                self.pending_text = ""
-                
-                # Reset accumulator BEFORE starting LLM
-                self.accumulated_transcript = ""
-                
-                # Send to LLM for response
-                self.current_response_task = asyncio.create_task(
-                    self.generate_llm_response(final_text)
-                )
-            else:
-                logger.debug("⚠️ Accumulated transcript empty, skipping LLM")
+        if not transcript.strip():
+            logger.debug("⚠️ Empty transcript, skipping LLM")
+            return
         
-        except asyncio.CancelledError:
-            logger.debug("🛑 Input timer cancelled (user continued speaking)")
-            raise
+        logger.info(f"🚀 SENDING TO LLM ({language}): '{transcript}'")
+        
+        # CRITICAL: Cancel previous LLM response if still running
+        if self.current_response_task and not self.current_response_task.done():
+            logger.warning("🛑 Cancelling previous LLM response")
+            self.current_response_task.cancel()
+            try:
+                await self.current_response_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Reset buffers
+        self.pending_text = ""
+        
+        # Send to LLM for response
+        self.current_response_task = asyncio.create_task(
+            self.generate_llm_response(transcript)
+        )
     
     async def monitor_vad(self):
         """

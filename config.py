@@ -151,8 +151,8 @@ ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream
 GOOGLE_SPEECH_ENDPOINT = "speech.googleapis.com"  # Global endpoint
 GOOGLE_SPEECH_LOCATION = "global"  # Global location
 GOOGLE_SPEECH_MODEL = "latest_short"  # Optimized for conversations, available everywhere
-GOOGLE_SPEECH_LANGUAGES = ["sk-SK", "cs-CZ"]  # Support both Slovak and Czech
-GOOGLE_SPEECH_LANGUAGE_CODES = ["sk", "cs"]  # For auto-detection
+GOOGLE_SPEECH_LANGUAGES = ["sk-SK"]  # Slovak ONLY (prevents language-mix hallucinations)
+GOOGLE_SPEECH_LANGUAGE_CODES = ["sk"]  # For auto-detection
 
 # Phrase adaptation for better recognition of company-specific terms
 # Boost: 20.0 = High priority for these exact phrases

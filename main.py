@@ -28,7 +28,6 @@ from google.api_core.client_options import ClientOptions
 from config import (
     GOOGLE_APPLICATION_CREDENTIALS,
     GOOGLE_CLOUD_PROJECT_ID,
-    GOOGLE_SPEECH_LOCATION,
     GOOGLE_SPEECH_MODEL,
     GOOGLE_SPEECH_LANGUAGES,
     GOOGLE_PHRASE_SETS,
@@ -514,17 +513,14 @@ class VoiceSession:
     async def init_google_speech(self):
         """Initialize Google Cloud Speech V2 client with Chirp 2 configuration."""
         try:
-            # Create Speech client with regional endpoint
-            # CRITICAL: Must use regional endpoint matching recognizer location
-            regional_endpoint = f"{GOOGLE_SPEECH_LOCATION}-speech.googleapis.com"
-            self.speech_client = SpeechAsyncClient(
-                client_options=ClientOptions(api_endpoint=regional_endpoint)
-            )
-            logger.info(f"🌍 Google Speech client endpoint: {regional_endpoint}")
+            # Create Speech client (using default global endpoint for multi-language support)
+            # CRITICAL: Multi-language (sk-SK, cs-CZ) only supported in global location
+            self.speech_client = SpeechAsyncClient()
+            logger.info(f"🌍 Google Speech client endpoint: speech.googleapis.com (global)")
             
             # Define recognizer path (required for V2 API)
-            # CRITICAL: Chirp 2 model only available in us-central1 location!
-            self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_SPEECH_LOCATION}/recognizers/_"
+            # CRITICAL: Using global location to support multiple languages (sk-SK, cs-CZ)
+            self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/global/recognizers/_"
             logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
             # Configure streaming recognition with Chirp 2

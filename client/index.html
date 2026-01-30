@@ -747,7 +747,14 @@
                     break;
                     
                 case 'pong':
-                    // Heartbeat response
+                    // Heartbeat response from server
+                    break;
+                
+                case 'ping':
+                    // Server keepalive ping - respond with pong
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(JSON.stringify({ type: 'pong' }));
+                    }
                     break;
                     
                 default:

@@ -317,6 +317,7 @@ class VoiceSession:
             )
             
             full_response = ""
+            token_count = 0
             
             async for chunk in stream:
                 if self.should_interrupt:
@@ -326,6 +327,11 @@ class VoiceSession:
                 if chunk.choices and chunk.choices[0].delta.content:
                     token = chunk.choices[0].delta.content
                     full_response += token
+                    token_count += 1
+                    
+                    # Debug logging every 5 tokens
+                    if token_count % 5 == 0:
+                        logger.debug(f"💬 LLM token #{token_count}: '{token}' (total: {len(full_response)} chars)")
                     
                     # Send token to TTS pipeline immediately
                     await self.send_text_to_tts(token)
@@ -336,6 +342,8 @@ class VoiceSession:
                         "text": token,
                         "is_final": False
                     })
+            
+            logger.info(f"✅ LLM generated {token_count} tokens, {len(full_response)} chars total")
             
             # Flush any remaining text to TTS
             await self.flush_tts_buffer()
@@ -391,6 +399,8 @@ class VoiceSession:
         if should_send and self.pending_text.strip():
             text_to_send = self.pending_text
             self.pending_text = ""
+            
+            logger.info(f"📝 Sending to TTS: '{text_to_send[:50]}...' ({len(text_to_send)} chars)")
             
             # Normalize text for TTS
             normalized_text = normalize_text(text_to_send)
@@ -465,6 +475,7 @@ class VoiceSession:
     async def stream_to_elevenlabs(self, text: str):
         """Stream text to ElevenLabs for TTS generation."""
         if not self.elevenlabs_ws:
+            logger.warning("⚠️ ElevenLabs WebSocket not connected, connecting now...")
             await self.connect_elevenlabs()
         
         if self.elevenlabs_ws and text.strip():
@@ -473,12 +484,18 @@ class VoiceSession:
                     "text": text,
                     "try_trigger_generation": True
                 }
+                logger.debug(f"🎙️ Streaming to ElevenLabs: '{text[:30]}...' ({len(text)} chars)")
                 await self.elevenlabs_ws.send(json.dumps(message))
+                logger.debug(f"✅ Sent to ElevenLabs successfully")
             except Exception as e:
-                logger.error(f"Error streaming to ElevenLabs: {e}")
+                logger.error(f"❌ Error streaming to ElevenLabs: {e}")
                 # Reconnect on error
                 self.elevenlabs_ws = None
                 await self.connect_elevenlabs()
+        elif not text.strip():
+            logger.debug("⚠️ Empty text, skipping ElevenLabs stream")
+        else:
+            logger.error("❌ ElevenLabs WebSocket is None after connection attempt!")
     
     async def receive_elevenlabs_audio(self):
         """Receive audio chunks from ElevenLabs and forward to client."""

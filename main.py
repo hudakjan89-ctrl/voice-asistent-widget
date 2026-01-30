@@ -524,8 +524,10 @@ class VoiceSession:
             logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
             # Configure streaming recognition with 'long' model
-            logger.info(f"📝 Phrase adaptation enabled: {len(GOOGLE_PHRASE_SETS)} phrases with boost={GOOGLE_PHRASE_BOOST}")
-            logger.debug(f"   Boosted phrases: {', '.join(GOOGLE_PHRASE_SETS[:5])}...")
+            # CRITICAL: Minimal config - 'long' model does NOT support:
+            #   - speech_adaptation_boost (phrase sets)
+            #   - automatic_punctuation
+            logger.info(f"⚙️ Using minimal config for 'long' model (no phrase adaptation, no auto-punctuation)")
             
             recognition_config = cloud_speech.RecognitionConfig(
                 explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
@@ -535,22 +537,8 @@ class VoiceSession:
                 ),
                 language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK, cs-CZ
                 model=GOOGLE_SPEECH_MODEL,  # long
-                features=cloud_speech.RecognitionFeatures(
-                    enable_automatic_punctuation=True,
-                    enable_word_time_offsets=False,
-                ),
-                adaptation=cloud_speech.SpeechAdaptation(
-                    phrase_sets=[
-                        cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
-                            inline_phrase_set=cloud_speech.PhraseSet(
-                                phrases=[
-                                    cloud_speech.PhraseSet.Phrase(value=phrase, boost=GOOGLE_PHRASE_BOOST)
-                                    for phrase in GOOGLE_PHRASE_SETS
-                                ]
-                            )
-                        )
-                    ]
-                ),
+                # NO features block - not supported by this model
+                # NO adaptation block - not supported by this model
             )
             
             streaming_config = cloud_speech.StreamingRecognitionConfig(

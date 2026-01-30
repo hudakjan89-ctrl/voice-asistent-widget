@@ -693,9 +693,16 @@ class VoiceSession:
                 logger.debug("⚠️ speech_stream is coroutine, awaiting to get async iterator...")
                 self.speech_stream = await self.speech_stream
             
+            logger.info("🎧 Starting Google STT transcript receiver loop...")
+            response_count = 0
+            
             # Now iterate over the async iterator
             async for response in self.speech_stream:
+                response_count += 1
+                logger.debug(f"📨 Google STT response #{response_count}")
+                
                 if not self.session_active:
+                    logger.info(f"🛑 Session inactive, stopping STT receiver (received {response_count} responses)")
                     break
                 
                 for result in response.results:
@@ -763,6 +770,9 @@ class VoiceSession:
         except Exception as e:
             logger.error(f"❌ Error receiving Google transcripts: {e}")
             logger.error(traceback.format_exc())
+        
+        finally:
+            logger.info(f"🎧 Google STT receiver loop ENDED (processed {response_count if 'response_count' in locals() else 0} responses)")
     
     async def monitor_vad(self):
         """

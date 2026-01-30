@@ -144,7 +144,7 @@ ELEVENLABS_MODEL = "eleven_flash_v2_5"  # Ultra-fast model for real-time streami
 ELEVENLABS_OPTIMIZE_LATENCY = 4  # Maximum streaming optimization
 # CRITICAL: Use PCM format for streaming (easier to decode in browser than MP3)
 ELEVENLABS_OUTPUT_FORMAT = "pcm_24000"  # PCM 24kHz 16-bit mono
-ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&optimize_streaming_latency={latency}&output_format={output_format}"
+ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&optimize_streaming_latency={latency}&output_format={output_format}&auto_mode=true"
 
 # Google Cloud Speech V2 Configuration
 # CRITICAL: Using global location + "long" model to support multiple languages (sk-SK, cs-CZ)

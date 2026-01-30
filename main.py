@@ -1,6 +1,6 @@
 # Force rebuild v4 - Google Speech V2 + Ultra-Fast Pipeline
 """
-Ultra-Low Latency Voice Assistant Backend with Google Cloud Speech V2 (Chirp 2)
+Ultra-Low Latency Voice Assistant Backend with Google Cloud Speech V2
 Main FastAPI server with WebSocket audio streaming pipeline.
 """
 import asyncio
@@ -146,7 +146,7 @@ app.add_middleware(LoggingMiddleware)
 class VoiceSession:
     """
     Manages a single ultra-fast voice conversation session.
-    Pipeline: Google Speech V2 (Chirp 2) -> Llama 3.3 70B -> ElevenLabs Flash v2.5
+    Pipeline: Google Speech V2 (long model) -> Llama 3.1 70B -> ElevenLabs Flash v2.5
     Target latency: <1.5s end-to-end
     """
     
@@ -511,7 +511,7 @@ class VoiceSession:
             logger.error(f"Error receiving from ElevenLabs: {e}")
     
     async def init_google_speech(self):
-        """Initialize Google Cloud Speech V2 client with Chirp 2 configuration."""
+        """Initialize Google Cloud Speech V2 client with 'long' model configuration."""
         try:
             # Create Speech client (using default global endpoint for multi-language support)
             # CRITICAL: Multi-language (sk-SK, cs-CZ) only supported in global location
@@ -523,7 +523,7 @@ class VoiceSession:
             self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/global/recognizers/_"
             logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
-            # Configure streaming recognition with Chirp 2
+            # Configure streaming recognition with 'long' model
             logger.info(f"📝 Phrase adaptation enabled: {len(GOOGLE_PHRASE_SETS)} phrases with boost={GOOGLE_PHRASE_BOOST}")
             logger.debug(f"   Boosted phrases: {', '.join(GOOGLE_PHRASE_SETS[:5])}...")
             
@@ -534,7 +534,7 @@ class VoiceSession:
                     audio_channel_count=AUDIO_CHANNELS,
                 ),
                 language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK, cs-CZ
-                model=GOOGLE_SPEECH_MODEL,  # chirp_2
+                model=GOOGLE_SPEECH_MODEL,  # long
                 features=cloud_speech.RecognitionFeatures(
                     enable_automatic_punctuation=True,
                     enable_word_time_offsets=False,
@@ -580,7 +580,7 @@ class VoiceSession:
             # Start VAD monitoring
             self.vad_task = asyncio.create_task(self.monitor_vad())
             
-            logger.info(f"✅ Google Speech V2 (Chirp 2) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
+            logger.info(f"✅ Google Speech V2 (long model) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
             
         except Exception as e:
             logger.error(f"❌ Error initializing Google Speech: {e}")

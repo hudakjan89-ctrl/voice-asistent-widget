@@ -774,21 +774,57 @@ class VoiceSession:
                 response_count += 1
                 logger.debug(f"📨 Google STT response #{response_count}")
                 
+                # DEBUG: Log full response details
+                try:
+                    num_results = len(response.results) if response.results else 0
+                    
+                    # Check for voice activity events (enabled with enable_voice_activity_events=True)
+                    speech_event_type = getattr(response, 'speech_event_type', None)
+                    speech_event_time = getattr(response, 'speech_event_time', None)
+                    
+                    if speech_event_type:
+                        logger.debug(f"🔍 Response #{response_count}: SPEECH_EVENT={speech_event_type}, time={speech_event_time}")
+                    else:
+                        logger.debug(f"🔍 Response #{response_count}: {num_results} result(s)")
+                    
+                    if num_results > 0:
+                        for idx, result in enumerate(response.results):
+                            num_alternatives = len(result.alternatives) if result.alternatives else 0
+                            logger.debug(f"  └─ Result[{idx}]: is_final={result.is_final}, alternatives={num_alternatives}")
+                            
+                            if num_alternatives > 0:
+                                for alt_idx, alternative in enumerate(result.alternatives):
+                                    transcript_text = alternative.transcript if hasattr(alternative, 'transcript') else "N/A"
+                                    confidence = alternative.confidence if hasattr(alternative, 'confidence') else "N/A"
+                                    logger.debug(f"      └─ Alternative[{alt_idx}]: transcript='{transcript_text}', confidence={confidence}")
+                except Exception as debug_err:
+                    logger.debug(f"⚠️ Error logging response details: {debug_err}")
+                
                 if not self.session_active:
                     logger.info(f"🛑 Session inactive, stopping STT receiver (received {response_count} responses)")
                     break
                 
                 for result in response.results:
                     if not result.alternatives:
+                        logger.debug("⚠️ Result has no alternatives, skipping")
                         continue
                     
-                    transcript = result.alternatives[0].transcript
-                    is_final = result.is_final
-                    
-                    # Detect language from result
-                    language_code = result.language_code if result.language_code else "cs"
-                    language = language_code.split("-")[0]  # sk-SK -> sk
-                    self.current_language = language
+                    # Extract transcript from first alternative (best match)
+                    # Reference: https://docs.cloud.google.com/speech-to-text/docs/reference/rpc/google.cloud.speech.v2#streamingrecognizeresponse
+                    try:
+                        transcript = result.alternatives[0].transcript
+                        is_final = result.is_final
+                        
+                        # Detect language from result
+                        language_code = result.language_code if result.language_code else "cs"
+                        language = language_code.split("-")[0]  # sk-SK -> sk
+                        self.current_language = language
+                        
+                        # DEBUG: Confirm extraction
+                        logger.debug(f"✅ Extracted: transcript='{transcript}', is_final={is_final}, language={language}")
+                    except Exception as extract_err:
+                        logger.error(f"❌ Error extracting transcript: {extract_err}")
+                        continue
                     
                     # LOG: Every received transcript (both interim and final)
                     logger.info(f"🎤 Google STT {'[FINAL]' if is_final else '[interim]'} ({language}): {transcript}")

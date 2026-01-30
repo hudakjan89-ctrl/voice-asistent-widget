@@ -195,6 +195,9 @@ class VoiceSession:
         # WebSocket keep-alive
         self.keepalive_task: Optional[asyncio.Task] = None
         
+        # ElevenLabs audio receiver task
+        self.elevenlabs_receive_task: Optional[asyncio.Task] = None
+        
         logger.info("New ultra-fast voice session created")
     
     def update_activity(self):
@@ -464,8 +467,9 @@ class VoiceSession:
             # Wait for WebSocket to be fully ready (handshake complete)
             await asyncio.sleep(0.3)
             
-            # Start receiving audio in background
-            asyncio.create_task(self.receive_elevenlabs_audio())
+            # Start receiving audio in background - CRITICAL: Store task reference!
+            self.elevenlabs_receive_task = asyncio.create_task(self.receive_elevenlabs_audio())
+            logger.info("🔄 Started ElevenLabs audio receiver task")
             
             logger.info("✅ ElevenLabs WebSocket connected and ready")
             return True
@@ -879,6 +883,15 @@ class VoiceSession:
                 await self.speech_client.close()
             except:
                 pass
+        
+        # Cancel ElevenLabs audio receiver task
+        if hasattr(self, 'elevenlabs_receive_task') and self.elevenlabs_receive_task:
+            self.elevenlabs_receive_task.cancel()
+            try:
+                await self.elevenlabs_receive_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("🛑 ElevenLabs receiver task cancelled")
         
         # Close ElevenLabs connection
         if self.elevenlabs_ws:

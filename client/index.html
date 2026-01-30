@@ -347,11 +347,15 @@
         let audioContext = null;
         let audioWorklet = null;
         let isActive = false;
+        let currentUserText = '';
+        let currentAssistantText = '';
+        
+        // ROBUST AUDIO PLAYBACK STATE
         let audioQueue = [];
         let isPlayingAudio = false;
         let assistantIsSpeaking = false;  // Track if assistant is speaking to pause mic
-        let currentUserText = '';
-        let currentAssistantText = '';
+        let nextStartTime = 0;  // Scheduled start time for seamless playback
+        let audioChunkCounter = 0;  // For debugging
 
         // DOM Elements
         const unmuteOverlay = document.getElementById('unmuteOverlay');
@@ -448,95 +452,128 @@
             currentAssistantText = '';
         }
 
-        // Audio playback using Web Audio API (for ElevenLabs Flash v2.5 MP3 output)
+        // ============================================================================
+        // ROBUST AUDIO PLAYBACK SYSTEM - Using Web Audio API for seamless streaming
+        // ============================================================================
+        
+        /**
+         * Initialize AudioContext (must be called after user interaction)
+         */
         async function initAudioPlayback() {
             if (!audioContext) {
                 // Use default sample rate (browser will handle MP3 decoding)
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log(`🎵 AudioContext created: state=${audioContext.state}, sampleRate=${audioContext.sampleRate}Hz`);
                 log(`AudioContext created: state=${audioContext.state}, sampleRate=${audioContext.sampleRate}Hz`, 'success');
             }
             
             // CRITICAL: Resume AudioContext if suspended (requires user interaction)
             if (audioContext.state === 'suspended') {
+                console.log('⚠️ AudioContext suspended, attempting to resume...');
                 log('AudioContext suspended, attempting to resume...', 'info');
                 try {
                     await audioContext.resume();
+                    console.log(`✅ AudioContext resumed: state=${audioContext.state}`);
                     log(`✅ AudioContext resumed: state=${audioContext.state}`, 'success');
                 } catch (error) {
+                    console.error(`❌ Failed to resume AudioContext:`, error);
                     log(`❌ Failed to resume AudioContext: ${error.message}`, 'error');
                 }
             }
             
+            // Initialize nextStartTime to current time
+            nextStartTime = audioContext.currentTime;
+            
             // Double-check state
             if (audioContext.state !== 'running') {
+                console.error(`⚠️ AudioContext not running (state=${audioContext.state})`);
                 log(`⚠️ WARNING: AudioContext not running (state=${audioContext.state}). Audio may not play!`, 'error');
+            } else {
+                console.log('✅ AudioContext is RUNNING and ready for playback');
             }
         }
 
-        // Play audio chunk (MP3 data from ElevenLabs)
-        async function playAudioChunk(audioData) {
+        /**
+         * Queue audio chunk for playback
+         * Chunks are played sequentially without gaps
+         */
+        async function queueAudioChunk(arrayBuffer) {
             if (!audioContext) {
+                console.error('❌ AudioContext not initialized!');
                 await initAudioPlayback();
             }
-
+            
+            audioChunkCounter++;
+            const chunkId = audioChunkCounter;
+            const size = arrayBuffer.byteLength;
+            
+            console.log(`🎵 [Chunk #${chunkId}] Received: ${size} bytes`);
+            log(`📥 Audio chunk #${chunkId}: ${size} bytes`, 'success');
+            
             try {
-                const arrayBuffer = audioData instanceof ArrayBuffer ? audioData : audioData.buffer;
-                log(`🔊 Decoding audio chunk: ${arrayBuffer.byteLength} bytes`);
-                
+                // Decode MP3 audio data to AudioBuffer
+                console.log(`🔄 [Chunk #${chunkId}] Decoding...`);
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-                log(`✅ Audio decoded: duration=${audioBuffer.duration.toFixed(2)}s, channels=${audioBuffer.numberOfChannels}`, 'success');
+                console.log(`✅ [Chunk #${chunkId}] Decoded: duration=${audioBuffer.duration.toFixed(3)}s, channels=${audioBuffer.numberOfChannels}`);
                 
+                // Create audio source
                 const source = audioContext.createBufferSource();
                 source.buffer = audioBuffer;
                 source.connect(audioContext.destination);
-                source.start(0);
                 
+                // Calculate start time for seamless playback
+                const now = audioContext.currentTime;
+                const startTime = Math.max(now, nextStartTime);
+                
+                // Schedule playback
+                source.start(startTime);
+                console.log(`▶️ [Chunk #${chunkId}] Scheduled at ${startTime.toFixed(3)}s (now=${now.toFixed(3)}s)`);
+                
+                // Update next start time for next chunk
+                nextStartTime = startTime + audioBuffer.duration;
+                console.log(`⏭️ Next chunk will start at ${nextStartTime.toFixed(3)}s`);
+                
+                // Update UI
                 setStatus('speaking', 'Asistent mluví...');
+                assistantIsSpeaking = true;
                 
+                // Handle playback end
                 source.onended = () => {
-                    log('Audio chunk playback finished');
-                    playNextInQueue();
+                    console.log(`✓ [Chunk #${chunkId}] Playback finished`);
+                    
+                    // Check if this was the last chunk
+                    if (audioContext.currentTime >= nextStartTime - 0.1) {
+                        console.log('🎵 All audio chunks played, returning to listening mode');
+                        assistantIsSpeaking = false;
+                        if (isActive) {
+                            setStatus('listening', 'Poslouchám...');
+                        }
+                    }
                 };
                 
             } catch (error) {
-                log(`❌ Error playing audio: ${error.message}`, 'error');
+                console.error(`❌ [Chunk #${chunkId}] Error:`, error);
+                log(`❌ Error playing chunk #${chunkId}: ${error.message}`, 'error');
                 log(`   AudioContext state: ${audioContext?.state}`, 'error');
-                playNextInQueue();
             }
         }
 
-        // Queue audio for sequential playback
-        function queueAudio(audioData) {
-            audioQueue.push(audioData);
-            log(`📥 Audio chunk queued: ${audioData.byteLength} bytes (queue size: ${audioQueue.length})`);
-            if (!isPlayingAudio) {
-                playNextInQueue();
-            }
-        }
-
-        // Play next audio in queue
-        function playNextInQueue() {
-            if (audioQueue.length > 0) {
-                isPlayingAudio = true;
-                assistantIsSpeaking = true;  // Pause microphone while speaking
-                const audioData = audioQueue.shift();
-                playAudioChunk(audioData);
-            } else {
-                isPlayingAudio = false;
-                assistantIsSpeaking = false;  // Resume microphone
-                if (isActive) {
-                    setStatus('listening', 'Poslouchám...');
-                }
-            }
-        }
-
-        // Clear audio queue (for barge-in)
+        /**
+         * Clear audio queue (for barge-in)
+         */
         function clearAudioQueue() {
-            audioQueue = [];
-            isPlayingAudio = false;
-            assistantIsSpeaking = false;  // Resume microphone after barge-in
-            // Stop any currently playing audio would require more complex handling
-            log('Audio buffer cleared (barge-in)', 'success');
+            // Reset scheduling
+            if (audioContext) {
+                nextStartTime = audioContext.currentTime;
+            }
+            assistantIsSpeaking = false;
+            
+            console.log('🧹 Audio queue cleared (barge-in)');
+            log('Audio queue cleared (barge-in)', 'success');
+            
+            if (isActive) {
+                setStatus('listening', 'Poslouchám...');
+            }
         }
 
         // Initialize microphone
@@ -671,21 +708,34 @@
                 };
                 
                 websocket.onmessage = async (event) => {
+                    // CRITICAL: Detect binary vs text data
                     if (event.data instanceof Blob) {
-                        // Binary audio data from ElevenLabs
-                        console.log(`🎵 RECEIVED AUDIO CHUNK: ${event.data.size} bytes (Blob)`);
-                        log(`🎵 Received audio chunk: ${event.data.size} bytes`, 'success');
+                        // BINARY DATA - Audio chunk from ElevenLabs
+                        console.log(`🔊 Received audio chunk: ${event.data.size} bytes (Blob)`);
+                        
+                        // Convert Blob to ArrayBuffer
                         const arrayBuffer = await event.data.arrayBuffer();
-                        console.log(`🎵 Converted to ArrayBuffer: ${arrayBuffer.byteLength} bytes`);
-                        queueAudio(arrayBuffer);
-                    } else {
-                        // JSON message
+                        console.log(`🔊 Converted to ArrayBuffer: ${arrayBuffer.byteLength} bytes`);
+                        
+                        // Queue for playback
+                        await queueAudioChunk(arrayBuffer);
+                        
+                    } else if (event.data instanceof ArrayBuffer) {
+                        // BINARY DATA - ArrayBuffer directly
+                        console.log(`🔊 Received audio chunk: ${event.data.byteLength} bytes (ArrayBuffer)`);
+                        await queueAudioChunk(event.data);
+                        
+                    } else if (typeof event.data === 'string') {
+                        // TEXT DATA - JSON message
                         try {
                             const message = JSON.parse(event.data);
                             handleMessage(message);
                         } catch (e) {
+                            console.error('❌ Invalid JSON:', event.data);
                             log(`Invalid JSON: ${event.data}`, 'error');
                         }
+                    } else {
+                        console.warn('⚠️ Unknown message type:', typeof event.data);
                     }
                 };
             });

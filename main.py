@@ -464,23 +464,30 @@ class VoiceSession:
     
     async def send_text_to_tts(self, text: str):
         """
-        Accumulate text and send to TTS when we have enough for natural speech.
-        CRITICAL: Stream immediately for ultra-fast audio start!
+        Accumulate text and send to TTS when we have full sentences.
+        CRITICAL: Buffer full sentences (. ! ?) or min 50 chars to prevent audio glitches.
         """
         self.pending_text += text
         
-        # Send on sentence boundaries for natural speech (. ! ? , ;)
-        # OR after enough text accumulated for smooth streaming
-        send_markers = [".", "!", "?", ",", ";"]
+        # Send only on FULL sentence boundaries (. ! ?)
+        # This prevents audio glitches from fragmented text
+        sentence_endings = [".", "!", "?"]
         
         should_send = False
-        for marker in send_markers:
-            if marker in self.pending_text:
+        for ending in sentence_endings:
+            if ending in self.pending_text:
                 should_send = True
                 break
         
-        # Also send if we have enough text (40 chars for faster response)
-        if len(self.pending_text) > 40:
+        # Also send if we have accumulated enough text (50+ chars minimum)
+        # This ensures ElevenLabs gets enough context for natural speech
+        if len(self.pending_text) >= 50 and not should_send:
+            # Check if we have at least a clause ending (, ;)
+            if "," in self.pending_text or ";" in self.pending_text:
+                should_send = True
+        
+        # Force send if buffer gets too large (100+ chars)
+        if len(self.pending_text) >= 100:
             should_send = True
         
         if should_send and self.pending_text.strip():
@@ -723,9 +730,9 @@ class VoiceSession:
                 requests=self._audio_request_generator()
             )
             
-            # Start receiving transcripts in background
-            # The task will iterate over the speech_stream async iterator
-            self.speech_receiver_task = asyncio.create_task(self.receive_google_transcripts())
+            # Start receiving transcripts in background with auto-reconnect
+            # The wrapper will automatically reconnect on 409 timeout errors
+            self.speech_receiver_task = asyncio.create_task(self.receive_google_transcripts_with_reconnect())
             
             # Start VAD monitoring
             self.vad_task = asyncio.create_task(self.monitor_vad())
@@ -766,21 +773,64 @@ class VoiceSession:
             except Exception as e:
                 logger.error(f"Error sending audio to Google Speech: {e}")
     
+    async def receive_google_transcripts_with_reconnect(self):
+        """
+        Wrapper that automatically reconnects Google STT on timeout/409 errors.
+        CRITICAL: Prevents crashes when Google STT stream times out.
+        """
+        max_retries = 10
+        retry_count = 0
+        
+        while self.session_active and retry_count < max_retries:
+            try:
+                await self.receive_google_transcripts()
+                # If we exit normally, break
+                break
+            
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # Check if it's a timeout/409 error that we can recover from
+                if any(keyword in error_str for keyword in ['409', 'timeout', 'aborted', 'stream timed out']):
+                    retry_count += 1
+                    logger.warning(f"⚠️ Google STT stream timeout (attempt {retry_count}/{max_retries}): {e}")
+                    logger.info("🔄 Auto-reconnecting Google STT stream in 1s...")
+                    
+                    # Wait 1s before reconnecting
+                    await asyncio.sleep(1)
+                    
+                    # Restart the stream
+                    try:
+                        self.speech_stream = self.speech_client.streaming_recognize(
+                            requests=self.audio_request_generator()
+                        )
+                        logger.info("✅ Google STT stream restarted successfully")
+                    except Exception as reconnect_error:
+                        logger.error(f"❌ Failed to reconnect: {reconnect_error}")
+                        if retry_count >= max_retries:
+                            logger.error("❌ Max retries reached, giving up")
+                            break
+                else:
+                    # Different error, re-raise
+                    logger.error(f"❌ Non-recoverable Google STT error: {e}")
+                    raise
+        
+        logger.info("🎧 Google STT receiver wrapper exiting")
+    
     async def receive_google_transcripts(self):
         """Receive and process transcripts from Google Speech V2."""
-        try:
-            # CRITICAL FIX: In Speech V2 API, streaming_recognize may return a coroutine
-            # Check if it's a coroutine and await it first to get the actual async iterator
-            import inspect
-            if inspect.iscoroutine(self.speech_stream):
-                logger.debug("⚠️ speech_stream is coroutine, awaiting to get async iterator...")
-                self.speech_stream = await self.speech_stream
-            
-            logger.info("🎧 Starting Google STT transcript receiver loop...")
-            response_count = 0
-            
-            # Now iterate over the async iterator
-            async for response in self.speech_stream:
+        # CRITICAL FIX: In Speech V2 API, streaming_recognize may return a coroutine
+        # Check if it's a coroutine and await it first to get the actual async iterator
+        import inspect
+        if inspect.iscoroutine(self.speech_stream):
+            logger.debug("⚠️ speech_stream is coroutine, awaiting to get async iterator...")
+            self.speech_stream = await self.speech_stream
+        
+        logger.info("🎧 Starting Google STT transcript receiver loop...")
+        response_count = 0
+        
+        # Now iterate over the async iterator
+        async for response in self.speech_stream:
                 response_count += 1
                 logger.debug(f"📨 Google STT response #{response_count}")
                 

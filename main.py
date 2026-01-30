@@ -503,22 +503,31 @@ class VoiceSession:
     async def receive_elevenlabs_audio(self):
         """Receive audio chunks from ElevenLabs and forward to client."""
         try:
+            message_count = 0
             async for message in self.elevenlabs_ws:
                 if self.should_interrupt:
                     break
                 
+                message_count += 1
+                message_type = type(message).__name__
+                
+                # DEBUG: Log message type
+                logger.debug(f"📩 Message #{message_count} from ElevenLabs: type={message_type}, size={len(message) if hasattr(message, '__len__') else 'N/A'}")
+                
                 # ElevenLabs sends both JSON (metadata) and binary (audio) messages
-                if isinstance(message, bytes):
-                    # Binary audio data
+                # Check for bytes or bytearray
+                if isinstance(message, (bytes, bytearray)):
+                    # Binary audio data (PCM)
                     chunk_size = len(message)
-                    logger.debug(f"🔊 Received audio chunk from ElevenLabs: {chunk_size} bytes")
-                    await self.send_audio_to_client(message)
+                    logger.info(f"🔊 Received PCM audio chunk from ElevenLabs: {chunk_size} bytes")
+                    await self.send_audio_to_client(bytes(message))
                     self.stats["audio_chunks_received"] += 1
                     
                     # Log every 10 chunks at INFO level for visibility
                     if self.stats["audio_chunks_received"] % 10 == 0:
                         logger.info(f"📦 Received {self.stats['audio_chunks_received']} audio chunks from ElevenLabs")
-                else:
+                        
+                elif isinstance(message, str):
                     # JSON metadata (acknowledgments, errors, etc.)
                     try:
                         data = json.loads(message)
@@ -526,11 +535,14 @@ class VoiceSession:
                             logger.error(f"❌ ElevenLabs error: {data['error']}")
                         else:
                             logger.debug(f"📨 ElevenLabs metadata: {data}")
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"⚠️ Non-JSON text message from ElevenLabs: {message[:100]}")
+                else:
+                    logger.warning(f"⚠️ Unknown message type from ElevenLabs: {message_type}")
         
         except Exception as e:
-            logger.error(f"Error receiving from ElevenLabs: {e}")
+            logger.error(f"❌ Error receiving from ElevenLabs: {e}")
+            logger.error(traceback.format_exc())
     
     async def init_google_speech(self):
         """Initialize Google Cloud Speech V2 client with 'long' model configuration."""

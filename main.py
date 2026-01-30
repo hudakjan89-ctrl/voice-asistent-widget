@@ -604,58 +604,33 @@ class VoiceSession:
             logger.info(f"🎧 ElevenLabs audio receiver task ENDED (total messages: {message_count})")
     
     async def init_google_speech(self):
-        """Initialize Google Cloud Speech V2 client with 'chirp_2' model for 100% reliability."""
+        """Initialize Google Cloud Speech V2 client with 'long' model for 100% reliability."""
         try:
-            from google.api_core.client_options import ClientOptions
-            
-            # CRITICAL: Chirp 2 requires us-central1 regional endpoint
-            api_endpoint = f"{GOOGLE_SPEECH_LOCATION}-speech.googleapis.com"
-            client_options = ClientOptions(api_endpoint=api_endpoint)
-            
-            # Create Speech client with regional endpoint
-            self.speech_client = SpeechAsyncClient(client_options=client_options)
-            logger.info(f"🌍 Google Speech client endpoint: {api_endpoint}")
+            # Create Speech client (using default global endpoint for multi-language support)
+            # CRITICAL: Multi-language (sk-SK, cs-CZ) only supported in global location
+            self.speech_client = SpeechAsyncClient()
+            logger.info(f"🌍 Google Speech client endpoint: speech.googleapis.com (global)")
             
             # Define recognizer path (required for V2 API)
-            # CRITICAL: Using us-central1 location for Chirp 2 model
+            # CRITICAL: Using global location to support multiple languages (sk-SK, cs-CZ)
             self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_SPEECH_LOCATION}/recognizers/_"
             logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
-            # Configure phrase adaptation for "EniQ" with high boost
-            # CRITICAL: Chirp 2 SUPPORTS phrase adaptation
-            phrase_set = cloud_speech.PhraseSet(
-                phrases=[
-                    cloud_speech.PhraseSet.Phrase(value="EniQ", boost=20.0),  # High priority boost
-                ]
-            )
-            
-            adaptation = cloud_speech.SpeechAdaptation(
-                phrase_sets=[
-                    cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
-                        inline_phrase_set=phrase_set
-                    )
-                ]
-            )
-            
-            logger.info(f"🎯 Phrase adaptation enabled: EniQ (boost=20.0)")
-            
-            # Configure recognition with Chirp 2 model
-            # CRITICAL: Chirp 2 SUPPORTS automatic_punctuation
+            # Configure recognition with 'long' model
+            # CRITICAL: Minimal config - 'long' model does NOT support features/adaptation
             recognition_config = cloud_speech.RecognitionConfig(
                 explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
                     encoding=cloud_speech.ExplicitDecodingConfig.AudioEncoding.LINEAR16,
                     sample_rate_hertz=AUDIO_SAMPLE_RATE,
                     audio_channel_count=AUDIO_CHANNELS,
                 ),
-                language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK
-                model=GOOGLE_SPEECH_MODEL,  # chirp_2
-                features=cloud_speech.RecognitionFeatures(
-                    enable_automatic_punctuation=True,  # Far-field optimization
-                ),
-                adaptation=adaptation,  # Phrase boost for "EniQ"
+                language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK, cs-CZ
+                model=GOOGLE_SPEECH_MODEL,  # long
+                # NO features block - not supported by this model
+                # NO adaptation block - not supported by this model
             )
             
-            logger.info(f"⚙️ Chirp 2 model configured: automatic_punctuation=True, phrase_boost=EniQ")
+            logger.info(f"⚙️ Using 'long' model with MINIMAL config (stable, multi-language)")
             
             # Configure streaming with VAD settings
             # CRITICAL: speech_end_timeout=1.2s allows 4-word sentences AND long 2-sentence phrases
@@ -663,7 +638,7 @@ class VoiceSession:
                 config=recognition_config,
                 streaming_features=cloud_speech.StreamingRecognitionFeatures(
                     interim_results=True,  # For UI feedback only
-                    # VAD (Voice Activity Detection) settings for 100% reliability
+                    # VAD (Voice Activity Detection) settings for reliability
                     voice_activity_timeout=cloud_speech.StreamingRecognitionFeatures.VoiceActivityTimeout(
                         speech_start_timeout={"seconds": 5},  # Wait up to 5s for speech to start
                         speech_end_timeout={"seconds": 1, "nanos": 200000000},  # 1.2s of silence = end
@@ -671,7 +646,7 @@ class VoiceSession:
                 ),
             )
             
-            logger.info(f"🎤 VAD configured: speech_end_timeout=1.2s (allows long phrases)")
+            logger.info(f"🎤 VAD configured: speech_end_timeout=1.2s (allows long phrases without cutoff)")
             
             # Store config for request generator
             self.streaming_config = streaming_config
@@ -693,8 +668,8 @@ class VoiceSession:
             # Start VAD monitoring
             self.vad_task = asyncio.create_task(self.monitor_vad())
             
-            logger.info(f"✅ Google Speech V2 (chirp_2 model) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
-            logger.info(f"✅ 100% Reliability Config: VAD=1.2s, Punctuation=ON, Phrase_Boost=EniQ(20.0)")
+            logger.info(f"✅ Google Speech V2 ('long' model) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
+            logger.info(f"✅ High Reliability Config: VAD=1.2s, Multi-language=sk-SK+cs-CZ, Timer-debouncing=1.3s")
             
         except Exception as e:
             logger.error(f"❌ Error initializing Google Speech: {e}")

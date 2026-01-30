@@ -325,7 +325,7 @@ class VoiceSession:
                 model=LLM_MODEL,
                 messages=messages,
                 stream=True,
-                max_tokens=300,  # Keep responses short for fast TTS
+                max_tokens=1500,  # Allow longer responses (natural conversation length)
                 temperature=0.7,
             )
             

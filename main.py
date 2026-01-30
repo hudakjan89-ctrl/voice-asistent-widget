@@ -182,7 +182,8 @@ class VoiceSession:
         self.vad_task: Optional[asyncio.Task] = None
         self.pending_transcript = ""  # Accumulate interim transcripts
         self.accumulated_transcript = ""  # Accumulate multiple is_final transcripts
-        self.silence_checker_task: Optional[asyncio.Task] = None  # Background silence checker
+        self.input_timer: Optional[asyncio.Task] = None  # Timer for input debouncing (1.3s patience)
+        self.current_language = "cs"  # Track current language for LLM
         
         # Session statistics
         self.stats = {
@@ -295,84 +296,6 @@ class VoiceSession:
         self.pending_text = ""
         
         logger.info("✅ Barge-in handled, ready for new input")
-    
-    async def check_silence_and_send_to_llm(self, language: str):
-        """
-        Background task that monitors for silence and sends to LLM.
-        CRITICAL: Only ONE instance of this task should run at a time.
-        """
-        try:
-            required_silence = 1.5  # Require 1.5s of complete silence
-            check_interval = 0.1  # Check every 100ms
-            max_wait = 5.0  # Max 5s total wait
-            
-            silence_start = time.time()
-            last_accumulated = self.accumulated_transcript
-            
-            logger.info(f"🔍 Silence checker started (require {required_silence}s silence, max {max_wait}s wait)")
-            
-            while True:
-                await asyncio.sleep(check_interval)
-                
-                current_time = time.time()
-                time_since_last_speech = current_time - self.last_speech_time
-                total_wait_time = current_time - silence_start
-                
-                # Check if accumulated transcript changed (user still speaking)
-                if self.accumulated_transcript != last_accumulated:
-                    logger.debug(f"📝 Transcript updated: '{self.accumulated_transcript}'")
-                    last_accumulated = self.accumulated_transcript
-                    silence_start = current_time  # Reset silence timer
-                    continue
-                
-                # If user spoke recently, wait more
-                if time_since_last_speech < required_silence:
-                    logger.debug(f"⏳ Waiting for silence ({time_since_last_speech:.1f}s / {required_silence}s)")
-                    continue
-                
-                # We have enough silence!
-                if time_since_last_speech >= required_silence:
-                    logger.info(f"✅ SILENCE DETECTED ({time_since_last_speech:.1f}s)! Sending to LLM")
-                    break
-                
-                # Timeout after max_wait
-                if total_wait_time >= max_wait:
-                    logger.warning(f"⏱️ Max wait time reached ({max_wait}s), forcing send to LLM")
-                    break
-            
-            # Send to LLM
-            if self.accumulated_transcript.strip():
-                final_text = self.accumulated_transcript.strip()
-                logger.info(f"🚀 SENDING TO LLM ({language}): '{final_text}'")
-                
-                # CRITICAL: Cancel previous LLM response if still running
-                if self.current_response_task and not self.current_response_task.done():
-                    logger.warning("🛑 Cancelling previous LLM response")
-                    self.current_response_task.cancel()
-                    try:
-                        await self.current_response_task
-                    except asyncio.CancelledError:
-                        pass
-                
-                # Reset buffers and state for new response
-                self.pending_text = ""
-                
-                # Reset accumulator BEFORE starting LLM
-                self.accumulated_transcript = ""
-                
-                # Send to LLM for response
-                self.current_response_task = asyncio.create_task(
-                    self.generate_llm_response(final_text)
-                )
-            else:
-                logger.debug("⚠️ Accumulated transcript empty, skipping LLM")
-        
-        except asyncio.CancelledError:
-            logger.info("🛑 Silence checker cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"❌ Error in silence checker: {e}")
-            logger.error(traceback.format_exc())
     
     async def generate_llm_response(self, user_text: str, is_greeting: bool = False):
         """Generate streaming response from Llama 3.1 70B (via OpenRouter - ultra-fast)."""
@@ -818,19 +741,20 @@ class VoiceSession:
         logger.info("🎧 Google STT receiver wrapper exiting")
     
     async def receive_google_transcripts(self):
-        """Receive and process transcripts from Google Speech V2."""
-        # CRITICAL FIX: In Speech V2 API, streaming_recognize may return a coroutine
-        # Check if it's a coroutine and await it first to get the actual async iterator
-        import inspect
-        if inspect.iscoroutine(self.speech_stream):
-            logger.debug("⚠️ speech_stream is coroutine, awaiting to get async iterator...")
-            self.speech_stream = await self.speech_stream
-        
-        logger.info("🎧 Starting Google STT transcript receiver loop...")
-        response_count = 0
-        
-        # Now iterate over the async iterator
-        async for response in self.speech_stream:
+        """Receive and process transcripts from Google Speech V2 with proper error handling."""
+        try:
+            # CRITICAL FIX: In Speech V2 API, streaming_recognize may return a coroutine
+            # Check if it's a coroutine and await it first to get the actual async iterator
+            import inspect
+            if inspect.iscoroutine(self.speech_stream):
+                logger.debug("⚠️ speech_stream is coroutine, awaiting to get async iterator...")
+                self.speech_stream = await self.speech_stream
+            
+            logger.info("🎧 Starting Google STT transcript receiver loop...")
+            response_count = 0
+            
+            # Now iterate over the async iterator
+            async for response in self.speech_stream:
                 response_count += 1
                 logger.debug(f"📨 Google STT response #{response_count}")
                 
@@ -848,6 +772,7 @@ class VoiceSession:
                     # Detect language from result
                     language_code = result.language_code if result.language_code else "cs"
                     language = language_code.split("-")[0]  # sk-SK -> sk
+                    self.current_language = language
                     
                     # LOG: Every received transcript (both interim and final)
                     logger.info(f"🎤 Google STT {'[FINAL]' if is_final else '[interim]'} ({language}): {transcript}")
@@ -895,15 +820,21 @@ class VoiceSession:
                         if self.is_speaking:
                             await self.handle_barge_in()
                         
-                        # CRITICAL: Start silence checker if not already running
-                        # Only ONE silence checker task should be active at a time
-                        if not self.silence_checker_task or self.silence_checker_task.done():
-                            logger.info("🔄 Starting silence checker task...")
-                            self.silence_checker_task = asyncio.create_task(
-                                self.check_silence_and_send_to_llm(language)
-                            )
-                        else:
-                            logger.debug("🔄 Silence checker already running, will accumulate")
+                        # CRITICAL: Timer-based Input Debouncing (1.3s patience)
+                        # Cancel any existing input timer
+                        if self.input_timer and not self.input_timer.done():
+                            logger.debug("⏱️ Cancelling previous input timer (user still speaking)")
+                            self.input_timer.cancel()
+                            try:
+                                await self.input_timer
+                            except asyncio.CancelledError:
+                                pass
+                        
+                        # Start new input timer (1.3s patience)
+                        logger.info("⏱️ Starting 1.3s input timer (waiting for user to finish)")
+                        self.input_timer = asyncio.create_task(
+                            self.wait_and_send_to_llm(language)
+                        )
                     else:
                         # Interim transcript - accumulate for VAD
                         self.pending_transcript = transcript
@@ -920,9 +851,53 @@ class VoiceSession:
         except Exception as e:
             logger.error(f"❌ Error receiving Google transcripts: {e}")
             logger.error(traceback.format_exc())
+            raise  # Re-raise so wrapper can handle reconnection
         
         finally:
             logger.info(f"🎧 Google STT receiver loop ENDED (processed {response_count if 'response_count' in locals() else 0} responses)")
+    
+    async def wait_and_send_to_llm(self, language: str):
+        """
+        Timer-based input debouncing: Wait 1.3s before sending to LLM.
+        If cancelled, it means user is still speaking.
+        """
+        try:
+            logger.debug("⏳ Waiting 1.3s for user to finish speaking...")
+            await asyncio.sleep(1.3)
+            
+            # If we reach here, user was silent for 1.3s
+            logger.info(f"✅ User finished speaking (1.3s silence)!")
+            
+            # Send accumulated transcript to LLM
+            if self.accumulated_transcript.strip():
+                final_text = self.accumulated_transcript.strip()
+                logger.info(f"🚀 SENDING TO LLM ({language}): '{final_text}'")
+                
+                # CRITICAL: Cancel previous LLM response if still running
+                if self.current_response_task and not self.current_response_task.done():
+                    logger.warning("🛑 Cancelling previous LLM response")
+                    self.current_response_task.cancel()
+                    try:
+                        await self.current_response_task
+                    except asyncio.CancelledError:
+                        pass
+                
+                # Reset buffers
+                self.pending_text = ""
+                
+                # Reset accumulator BEFORE starting LLM
+                self.accumulated_transcript = ""
+                
+                # Send to LLM for response
+                self.current_response_task = asyncio.create_task(
+                    self.generate_llm_response(final_text)
+                )
+            else:
+                logger.debug("⚠️ Accumulated transcript empty, skipping LLM")
+        
+        except asyncio.CancelledError:
+            logger.debug("🛑 Input timer cancelled (user continued speaking)")
+            raise
     
     async def monitor_vad(self):
         """
@@ -1044,11 +1019,11 @@ class VoiceSession:
             except asyncio.CancelledError:
                 pass
         
-        # Cancel silence checker task
-        if self.silence_checker_task:
-            self.silence_checker_task.cancel()
+        # Cancel input timer task
+        if self.input_timer:
+            self.input_timer.cancel()
             try:
-                await self.silence_checker_task
+                await self.input_timer
             except asyncio.CancelledError:
                 pass
         

@@ -1,5 +1,5 @@
 """
-Configuration module for Voice Assistant.
+Configuration module for Ultra-Fast Voice Assistant.
 Loads environment variables and provides configuration constants.
 """
 import os
@@ -13,15 +13,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # API Keys
-GLADIA_API_KEY = os.getenv("GLADIA_API_KEY", "")  # For real-time STT with language detection
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/app/google-credentials.json")
+GOOGLE_CLOUD_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-
-# Backwards compatibility aliases (main.py still uses old names temporarily)
-DEEPGRAM_API_KEY = GLADIA_API_KEY
-DEEPGRAM_MODEL = "fast"  # Not used, but kept for compatibility
-DEEPGRAM_LANGUAGE = "auto"  # Auto-detect SK/CZ
-
 
 from errors import ConfigurationError
 
@@ -33,7 +28,7 @@ def validate_api_keys() -> dict:
     Raises ConfigurationError if critical keys are missing.
     """
     results = {
-        "gladia": {"configured": bool(GLADIA_API_KEY), "service": "STT"},
+        "google_cloud": {"configured": bool(GOOGLE_CLOUD_PROJECT_ID and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS)), "service": "STT"},
         "openrouter": {"configured": bool(OPENROUTER_API_KEY), "service": "LLM"},
         "elevenlabs": {"configured": bool(ELEVENLABS_API_KEY), "service": "TTS"},
     }
@@ -41,11 +36,11 @@ def validate_api_keys() -> dict:
     missing = []
     for key, info in results.items():
         if not info["configured"]:
-            missing.append(f"{key.upper()}_API_KEY ({info['service']})")
-            logger.warning(f"Missing API key: {key.upper()}_API_KEY for {info['service']}")
+            missing.append(f"{key.upper()} ({info['service']})")
+            logger.warning(f"Missing configuration: {key.upper()} for {info['service']}")
     
     if missing:
-        error_msg = f"Missing required API keys: {', '.join(missing)}"
+        error_msg = f"Missing required configuration: {', '.join(missing)}"
         logger.error(error_msg)
         raise ConfigurationError(error_msg)
     
@@ -57,178 +52,140 @@ def get_config_summary() -> dict:
     """Return a summary of current configuration (without sensitive data)."""
     return {
         "llm_model": LLM_MODEL,
-        "stt_service": "Gladia Real-time",
-        "stt_language": "auto-detect (SK/CZ)",
+        "stt_service": "Google Cloud Speech V2 (Chirp 2)",
+        "stt_languages": "sk-SK, cs-CZ (auto-detect)",
         "elevenlabs_voice_id": ELEVENLABS_VOICE_ID,
         "elevenlabs_model": ELEVENLABS_MODEL,
         "host": HOST,
         "port": PORT,
         "api_keys_configured": {
-            "gladia": bool(GLADIA_API_KEY),
+            "google_cloud": bool(GOOGLE_CLOUD_PROJECT_ID and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS)),
             "openrouter": bool(OPENROUTER_API_KEY),
             "elevenlabs": bool(ELEVENLABS_API_KEY),
         }
     }
 
 # LLM Configuration
-LLM_MODEL = os.getenv("LLM_MODEL", "anthropic/claude-3.5-haiku")
+# Using Llama 3.3 70B Instruct via OpenRouter (DeepInfra Turbo provider)
+LLM_MODEL = os.getenv("LLM_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# ElevenLabs Configuration
-# Using Rachel (free voice with multilingual support for SK/CZ)
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel
-ELEVENLABS_MODEL = "eleven_multilingual_v2"  # Better for non-English languages
-ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
+# ElevenLabs Configuration (Flash v2.5 for ultra-low latency)
+# Using Adam voice (pNInz6obpg8ndclK7Ab3) - stable with Flash model
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "pNInz6obpg8ndclK7Ab3")  # Adam
+ELEVENLABS_MODEL = "eleven_flash_v2_5"  # Ultra-fast model for real-time streaming
+ELEVENLABS_OPTIMIZE_LATENCY = 4  # Maximum streaming optimization
+ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&optimize_streaming_latency={latency}"
 
-# Gladia Configuration (Real-time STT with language detection)
-GLADIA_WS_URL = "wss://api.gladia.io/audio/text/audio-transcription"
-# Language detection is automatic - supports SK, CZ, and many others
-# Returns detected language in each transcript for dynamic language switching
+# Google Cloud Speech V2 Configuration (Chirp 2)
+GOOGLE_SPEECH_MODEL = "chirp_2"  # Latest Chirp model with best accuracy
+GOOGLE_SPEECH_LANGUAGES = ["sk-SK", "cs-CZ"]  # Support both Slovak and Czech
+GOOGLE_SPEECH_LANGUAGE_CODES = ["sk", "cs"]  # For auto-detection
+
+# Phrase adaptation for better recognition of company-specific terms
+# Boost: 20.0 = High priority for these exact phrases
+GOOGLE_PHRASE_SETS = [
+    "EniQ",
+    "Alex", 
+    "Matěj Moucha",
+    "automatizácia",
+    "Eniq.ai",
+    "Enik",
+    "widget",
+    "voice bot",
+    "digitálny asistent",
+    "digitální asistent",
+    "chatbot",
+    "chatboti"
+]
+GOOGLE_PHRASE_BOOST = 20.0
+
+# VAD (Voice Activity Detection) Configuration
+VAD_SILENCE_TIMEOUT_MS = 350  # Send to LLM after 350ms of silence
 
 # Server Configuration
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
 # Audio Configuration
-AUDIO_SAMPLE_RATE = 16000
-AUDIO_CHANNELS = 1
+AUDIO_SAMPLE_RATE = 16000  # Google Chirp 2 requires 16kHz
+AUDIO_CHANNELS = 1  # Mono
+AUDIO_ENCODING = "LINEAR16"  # PCM 16-bit
 
 # Session Configuration
 SESSION_INACTIVITY_TIMEOUT = int(os.getenv("SESSION_INACTIVITY_TIMEOUT", "300"))  # 5 minutes
 MAX_CONVERSATION_HISTORY = int(os.getenv("MAX_CONVERSATION_HISTORY", "20"))  # Max messages to keep
 
-# System Prompt Template with EniQ Knowledge Base
-SYSTEM_PROMPT_TEMPLATE = """
-Si profesionálny hlasový asistent spoločnosti EniQ / Jsi profesionální hlasový asistent společnosti EniQ. Tvoje meno je Alex / Tvoje jméno je Alex.
+# System Prompt - Czech Only (strict mode)
+# User can speak SK or CZ, but Alex ALWAYS responds in Czech
+SYSTEM_PROMPT_TEMPLATE = """Jsi Alex, hlasový asistent společnosti EniQ pro digitální automatizaci.
 
-=== ZÁKLADNÉ PRAVIDLÁ / ZÁKLADNÍ PRAVIDLA ===
-1. DETEKUJ JAZYK: Automaticky rozpoznaj, či užívateľ hovorí slovensky alebo česky.
-2. ZRKADLOVÝ JAZYK: VŽDY odpovedaj v TOM ISTOM jazyku, v ktorom hovorí užívateľ:
-   - Ak hovorí SLOVENSKY → odpovedaj SLOVENSKY
-   - Ak hovorí ČESKY → odpovedaj ČESKY
-3. Buď stručný a vecný - krátke odpovede sú lepšie pre hlasovú komunikáciu.
-4. Buď profesionálny, ale priateľský a ľudský.
-5. Ak niečomu nerozumieš, zdvorilo požiadaj o spresnenie (v jazyku užívateľa).
-6. Nikdy nepoužívaj emoji, špeciálne znaky ani markdown formátovanie.
-7. Čísla vyslovuj slovne (napr. SK: "sedemsto tridsaťtri", CZ: "sedm set třicet tři").
+=== ZÁKLADNÍ PRAVIDLA ===
+1. VŽDY mluv POUZE ČESKY - i když uživatel mluví slovensky nebo jinak
+2. Buď stručný a výstižný - max 1-2 věty
+3. Mluv přirozeně jako skutečný člověk
+4. Pokud v přepisu vidíš "Emit", "Enik", nebo podobné komoleniny - automaticky to oprav na "EniQ"
+5. Nikdy nepoužívej emoji ani markdown formátování
+6. Čísla vyslovuj slovy: "sedm set třicet tři" místo "733"
 
-=== PRAVIDLÁ PRE PRERUŠENIE (BARGE-IN) ===
-Keď ťa zákazník preruší uprostred odpovede:
-1. Okamžite prestaň hovoriť a vypočuj si jeho novú otázku.
-2. Odpovedz na novú otázku (v jeho jazyku).
-3. Ak nová otázka SÚVISÍ s predchádzajúcou témou:
-   - SK: "Chcete sa vrátiť k predchádzajúcej téme, alebo vám môžem pomôcť s niečím iným?"
-   - CZ: "Chcete se vrátit k předchozímu tématu, nebo vám mohu pomoci s něčím jiným?"
-4. Ak nová otázka NESÚVISÍ, jednoducho odpovedz a pokračuj normálne.
+=== PRAVIDLA PRE PRERUŠENÍ (BARGE-IN) ===
+Pokud tě uživatel přeruší:
+1. Okamžitě přestaň mluvit
+2. Odpověz na jeho novou otázku
+3. Pokud nová otázka souvisí s předchozí: "Chcete se vrátit k předchozímu tématu?"
+4. Pokud nesouvisí - prostě odpověz a pokračuj normálně
 
 === AKTUÁLNÍ ČAS ===
 Čas: {current_time}
 Den: {current_day}
 
 === O SPOLEČNOSTI ENIQ ===
-EniQ je česká technologická firma, která navrhuje a vyvíjí chytrá digitální řešení a automatizované systémy pro firmy. Motto: "Budoucnost bez limitů. Výkon bez pauzy, nonstop."
+EniQ je česká firma pro chytrá digitální řešení a automatizace. Motto: "Budoucnost bez limitů. Výkon bez pauzy, nonstop."
 
-Řešení EniQ přebírají rutinní úkoly, šetří čas, snižují náklady a pomáhají firmám růst. EniQ se specializuje na digitální asistenty a automatizace procesů, které dokáží zajistit zákaznickou podporu, operativu i další firemní komunikaci 24 hodin denně, 7 dní v týdnu.
+Řešení EniQ:
+- Automatizace rutinních úkolů (faktury, platby, reporty)
+- Chatboti pro web (zákaznická podpora 24/7)
+- Interní digitální asistenti (kalendáře, emaily, úkoly)
+- Projekty na míru podle potřeb klienta
 
-Za EniQ stojí tým mladých a ambiciózních odborníků - vývojářů a konzultantů se zkušenostmi s automatizací a AI.
+Tým: Mladí odborníci - vývojáři a konzultanti s expertízou v AI a automatizaci.
 
-=== SLUŽBY ENIQ ===
-
-1. AUTOMATIZACE PROCESŮ:
-   - Automatizace opakovaných podnikových úkolů
-   - Vystavování faktur, párování plateb
-   - Aktualizace skladových zásob
-   - Generování reportů
-   - Předávání dat mezi systémy
-   - Výrazně zrychluje rutinní procesy a omezuje manuální práci a chyby
-
-2. CHATBOTI (WEBOVÍ ASISTENTI):
-   - Digitální asistenti na webu pro zvýšení prodejů
-   - Zlepšování zákaznické podpory online
-   - Rychlé odpovědi na dotazy návštěvníků
-   - Doporučení vhodných produktů či řešení
-   - Navigace klienta k dokončení nákupu v e-shopu
-   - Fungují jako virtuální prodejci dostupní 24/7
-
-3. INTERNÍ DIGITÁLNÍ ASISTENTI:
-   - Správa kalendářů
-   - Psaní e-mailů
-   - Sledování úkolů
-   - Sumarizace schůzek
-   - Šetří čas zaměstnancům
-   - Pracují nonstop bez prodlev
-
-4. ŘEŠENÍ NA MÍRU A KONZULTACE:
-   - Vývoj komplexních řešení dle specifických potřeb
-   - Strategické konzultace
-   - Projekty na míru podle cílů a požadavků klienta
-   - Analýza potřeb
-   - Integrace do stávajících systémů
-
-=== KONTAKTNÍ ÚDAJE ===
+=== KONTAKT ===
 - Telefon: +420 733 275 349 (vyslov: "plus čtyři sta dvacet, sedm set třicet tři, dva sedm pět, tři čtyři devět")
-- E-mail: moucha@eniq.eu (vyslov: "moucha zavináč eniq tečka eu")
-- IČO: 23809329 (živnostenské oprávnění Matěj Moucha)
+- Email: moucha@eniq.eu
+- IČO: 23809329 (Matěj Moucha)
 
-=== ČASTO KLADENÉ OTÁZKY / ČASTÉ DOTAZY (FAQ) ===
+=== ČASTO KLADENÉ OTÁZKY ===
+Q: Co všechno EniQ dělá?
+A: EniQ se zabývá vývojem digitálních asistentů a chytrých automatizací pro firmy. Technologie dokážou převzít zákaznickou podporu, operativu i komunikaci 24/7.
 
-Q SK: Čo všetko EniQ vlastne robí?
-Q CZ: Co všechno EniQ vlastně dělá?
-A SK: EniQ sa zaoberá vývojom digitálnych asistentov a inteligentných automatizácií pre firmy. Tieto technológie dokážu prevziať širokú škálu firemných činností od zákazníckej podpory a komunikácie až po vnútornú operatívu, a to úplne automaticky 24/7.
-A CZ: EniQ se zabývá vývojem digitálních asistentů a chytrých automatizací pro firmy. Tyto technologie dokážou převzít širokou škálu firemních činností od zákaznické podpory a komunikace až po vnitřní operativu, a to zcela automaticky 24/7.
+Q: Je to vždy na míru?
+A: Ano, většinou řešení přizpůsobujeme na míru podle vašich potřeb. Nabízíme konzultace a vyvíjíme projekty přesně podle vašich cílů.
 
-Q SK: Je to vždy na mieru, alebo máte hotové produkty?
-Q CZ: Je to vždy na míru, nebo máte hotové produkty?
-A SK: Riešenia od EniQ sú väčšinou prispôsobené na mieru podľa potrieb zákazníka. Ponúkame strategické konzultácie a vyvíjame projekty presne podľa vašich cieľov a požiadaviek.
-A CZ: Řešení od EniQ jsou většinou přizpůsobena na míru podle potřeb zákazníka. Nabízíme strategické konzultace a vyvíjíme projekty přesně podle vašich cílů a požadavků.
+Q: Co je digitální asistent?
+A: Software využívající AI, který autonomně vykonává úkoly jako lidský asistent. Převezme rutinní práci a ušetříte čas.
 
-Q SK: Čo je to digitálny asistent a ako mi pomôže?
-Q CZ: Co je to digitální asistent a jak mi pomůže?
-A SK: Digitálny asistent je softvér využívajúci AI, ktorý dokáže autonómne vykonávať rôzne úlohy podobne ako ľudský asistent. Prevezme každodenné úlohy a ušetríte čas.
-A CZ: Digitální asistent je software využívající AI, který umí autonomně vykonávat různé úkoly podobně jako lidský asistent. Převezme každodenní úkoly a ušetříte čas.
-
-=== PRÍKLADY POZDRAVOV / PŘÍKLADY POZDRAVŮ ===
-SLOVENSKY:
-- Ráno (6:00-12:00): "Dobré ráno, tu Alex z EniQ, ako vám môžem pomôcť?"
-- Deň (12:00-18:00): "Dobrý deň, tu Alex z EniQ, ako vám môžem pomôcť?"
-- Večer (18:00-22:00): "Dobrý večer, tu Alex z EniQ, ako vám môžem pomôcť?"
-
-ČESKY:
-- Ráno (6:00-12:00): "Dobré ráno, tady Alex z EniQ, jak vám mohu pomoci?"
-- Odpoledne (12:00-18:00): "Dobré odpoledne, tady Alex z EniQ, jak vám mohu pomoci?"
-- Večer (18:00-22:00): "Dobrý večer, tady Alex z EniQ, jak vám mohu pomoci?"
-
-Pamätaj / Pamatuj: Odpovedaj prirodzene a konverzačne, ako skutočný človek. Si hlas spoločnosti EniQ.
+Pamatuj: Mluv přirozeně, stručně a POUZE ČESKY. Jsi hlas společnosti EniQ.
 """
 
 
-def get_greeting_prompt() -> str:
-    """Generate a greeting prompt based on current time."""
+def get_greeting_text() -> str:
+    """
+    Generate time-appropriate greeting in Czech only.
+    Returns hardcoded Czech greeting based on current time.
+    """
     from datetime import datetime
-    import locale
-    
-    try:
-        locale.setlocale(locale.LC_TIME, 'cs_CZ.UTF-8')
-    except:
-        pass
     
     now = datetime.now()
     hour = now.hour
     
+    # Time-based greeting (always Czech)
     if 6 <= hour < 12:
-        time_of_day = "ráno"
-        greeting = "Dobré ráno"
+        return "Dobré ráno, tady Alex z EniQ, jak vám mohu pomoci?"
     elif 12 <= hour < 18:
-        time_of_day = "odpoledne"
-        greeting = "Dobré odpoledne"
-    elif 18 <= hour < 22:
-        time_of_day = "večer"
-        greeting = "Dobrý večer"
+        return "Dobré odpoledne, tady Alex z EniQ, jak vám mohu pomoci?"
     else:
-        time_of_day = "noc"
-        greeting = "Dobrý večer"
-    
-    return f"Pozdrav zákazníka PŘESNĚ takto: '{greeting}, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?'"
+        return "Dobrý večer, tady Alex z EniQ, jak vám mohu pomoci?"
 
 
 def get_system_prompt() -> str:

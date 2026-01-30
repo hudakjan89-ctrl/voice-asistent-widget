@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Assistant - Test Client</title>
+    <title>Ultra-Fast Voice AI - EniQ Assistant</title>
     <style>
         * {
             margin: 0;
@@ -233,8 +233,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>🎤 Voice Assistant</h1>
-        <p class="subtitle">Ultra-Low Latency AI Voice Interface</p>
+        <h1>⚡ Ultra-Fast Voice AI</h1>
+        <p class="subtitle">Google Speech V2 • Llama 3.3 70B • ElevenLabs Flash v2.5</p>
 
         <div class="status-bar">
             <div class="status-indicator" id="statusIndicator"></div>
@@ -262,12 +262,14 @@
     </div>
 
     <script>
-        // Configuration
+        // Configuration - Ultra-Fast Voice AI
         // Use wss:// for HTTPS (cloudflare), ws:// for HTTP (local)
         const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const WS_URL = `${WS_PROTOCOL}//${window.location.host}/ws/audio`;
-        const SAMPLE_RATE = 16000;
-        const CHANNELS = 1;
+        const WS_URL = `${WS_PROTOCOL}//${window.location.host}/ws`;
+        
+        // Audio config for Google Cloud Speech V2 (Chirp 2)
+        const SAMPLE_RATE = 16000;  // 16kHz LINEAR16 PCM required by Google
+        const CHANNELS = 1;          // Mono audio
 
         // State
         let websocket = null;
@@ -374,12 +376,11 @@
             currentAssistantText = '';
         }
 
-        // Audio playback using Web Audio API
+        // Audio playback using Web Audio API (for ElevenLabs Flash v2.5 MP3 output)
         async function initAudioPlayback() {
             if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                    sampleRate: 44100
-                });
+                // Use default sample rate (browser will handle MP3 decoding)
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
             
             if (audioContext.state === 'suspended') {

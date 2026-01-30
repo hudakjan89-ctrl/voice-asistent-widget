@@ -1,6 +1,6 @@
-# Force rebuild v3 - fix static file routing order
+# Force rebuild v4 - Google Speech V2 + Ultra-Fast Pipeline
 """
-Ultra-Low Latency Voice Assistant Backend
+Ultra-Low Latency Voice Assistant Backend with Google Cloud Speech V2 (Chirp 2)
 Main FastAPI server with WebSocket audio streaming pipeline.
 """
 import asyncio
@@ -9,8 +9,10 @@ import logging
 import sys
 import traceback
 import time
-from typing import Optional
+import os
+from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,20 +20,34 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import httpx
 from openai import AsyncOpenAI
 
+# Google Cloud Speech V2
+from google.cloud.speech_v2 import SpeechAsyncClient
+from google.cloud.speech_v2.types import cloud_speech
+from google.api_core.client_options import ClientOptions
+
 from config import (
-    GLADIA_API_KEY,
-    GLADIA_WS_URL,
+    GOOGLE_APPLICATION_CREDENTIALS,
+    GOOGLE_CLOUD_PROJECT_ID,
+    GOOGLE_SPEECH_MODEL,
+    GOOGLE_SPEECH_LANGUAGES,
+    GOOGLE_PHRASE_SETS,
+    GOOGLE_PHRASE_BOOST,
+    VAD_SILENCE_TIMEOUT_MS,
     OPENROUTER_API_KEY,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     ELEVENLABS_MODEL,
     ELEVENLABS_WS_URL,
+    ELEVENLABS_OPTIMIZE_LATENCY,
     LLM_MODEL,
     OPENROUTER_BASE_URL,
     SESSION_INACTIVITY_TIMEOUT,
     MAX_CONVERSATION_HISTORY,
+    AUDIO_SAMPLE_RATE,
+    AUDIO_CHANNELS,
+    AUDIO_ENCODING,
     get_system_prompt,
-    get_greeting_prompt,
+    get_greeting_text,
     validate_api_keys,
     get_config_summary,
 )
@@ -60,10 +76,14 @@ logger.setLevel(logging.DEBUG)
 
 # Log startup
 logger.info("=" * 60)
-logger.info("VOICE ASSISTANT SERVER STARTING")
+logger.info("ULTRA-FAST VOICE ASSISTANT SERVER STARTING")
 logger.info("=" * 60)
 logger.info(f"Python version: {sys.version}")
 logger.info(f"Working directory: {__file__}")
+
+# Set Google Cloud credentials from environment
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_APPLICATION_CREDENTIALS
+logger.info(f"Google Cloud credentials: {GOOGLE_APPLICATION_CREDENTIALS}")
 
 # OpenRouter client (OpenAI compatible)
 openai_client = AsyncOpenAI(
@@ -75,7 +95,7 @@ openai_client = AsyncOpenAI(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    logger.info("Starting Voice Assistant Server...")
+    logger.info("Starting Ultra-Fast Voice Assistant Server...")
     
     # Validate API keys at startup
     try:
@@ -88,169 +108,46 @@ async def lifespan(app: FastAPI):
     config = get_config_summary()
     logger.info(f"LLM Model: {config['llm_model']}")
     logger.info(f"STT Service: {config['stt_service']}")
-    logger.info(f"STT Language: {config['stt_language']}")
-    logger.info(f"ElevenLabs Voice: {config['elevenlabs_voice_id']}")
+    logger.info(f"STT Languages: {config['stt_languages']}")
+    logger.info(f"ElevenLabs Voice: {config['elevenlabs_voice_id']} ({ELEVENLABS_MODEL})")
+    logger.info(f"Target Latency: <1.5s")
     
     yield
     logger.info("Shutting down Voice Assistant Server...")
 
 
 app = FastAPI(
-    title="Voice Assistant API",
-    description="Ultra-low latency voice assistant with streaming STT, LLM, and TTS",
-    version="1.0.0",
-    lifespan=lifespan,
+    title="Ultra-Fast Voice Assistant API",
+    description="Ultra-low latency voice assistant with Google Speech V2, Llama 3.3 70B, and ElevenLabs Flash v2.5",
+    version="4.0.0",
+    lifespan=lifespan
 )
 
 
-# Request/Response logging middleware
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware to log all incoming requests and outgoing responses."""
+class LoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware to log all HTTP requests."""
     
     async def dispatch(self, request: Request, call_next):
-        # Log incoming request
-        start_time = time.time()
         logger.info(f">>> REQUEST: {request.method} {request.url.path}")
         logger.debug(f"    Headers: {dict(request.headers)}")
         logger.debug(f"    Query params: {dict(request.query_params)}")
         
-        try:
-            # Process request
-            response = await call_next(request)
-            
-            # Calculate processing time
-            process_time = time.time() - start_time
-            
-            # Log response
-            logger.info(f"<<< RESPONSE: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.3f}s")
-            
-            return response
-            
-        except Exception as e:
-            # Log error
-            process_time = time.time() - start_time
-            logger.error(f"!!! ERROR: {request.method} {request.url.path} - {type(e).__name__}: {e} - Time: {process_time:.3f}s")
-            logger.error(f"    Traceback:\n{traceback.format_exc()}")
-            raise
+        start_time = time.time()
+        response = await call_next(request)
+        duration = time.time() - start_time
+        
+        logger.info(f"<<< RESPONSE: {request.method} {request.url.path} - Status: {response.status_code} - Time: {duration:.3f}s")
+        return response
 
-
-# Add middleware
-app.add_middleware(RequestLoggingMiddleware)
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    config = get_config_summary()
-    return JSONResponse({
-        "status": "healthy",
-        "service": "voice-assistant",
-        "config": {
-            "llm_model": config["llm_model"],
-            "stt_service": config["stt_service"],
-            "stt_language": config["stt_language"],
-            "api_keys_configured": config["api_keys_configured"],
-        }
-    })
-
-
-@app.get("/health/detailed")
-async def detailed_health_check():
-    """
-    Detailed health check with external service connectivity tests.
-    Use this for debugging configuration issues.
-    """
-    results = {
-        "status": "healthy",
-        "service": "voice-assistant",
-        "checks": {}
-    }
-    
-    # Check Gladia API connectivity
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                "https://api.gladia.io/v2/live",
-                headers={
-                    "Content-Type": "application/json",
-                    "x-gladia-key": GLADIA_API_KEY
-                },
-                json={
-                    "encoding": "wav/pcm",
-                    "sample_rate": 16000,
-                    "bit_depth": 16,
-                    "channels": 1
-                }
-            )
-            results["checks"]["gladia"] = {
-                "status": "ok" if response.status_code in [200, 201] else "error",
-                "reachable": True,
-                "authenticated": response.status_code in [200, 201]
-            }
-    except Exception as e:
-        results["checks"]["gladia"] = {
-            "status": "error",
-            "reachable": False,
-            "error": str(e)
-        }
-    
-    # Check OpenRouter API connectivity
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(
-                f"{OPENROUTER_BASE_URL}/models",
-                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
-            )
-            results["checks"]["openrouter"] = {
-                "status": "ok" if response.status_code in [200, 401] else "error",
-                "reachable": True,
-                "authenticated": response.status_code == 200
-            }
-    except Exception as e:
-        results["checks"]["openrouter"] = {
-            "status": "error",
-            "reachable": False,
-            "error": str(e)
-        }
-    
-    # Check ElevenLabs API connectivity
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(
-                "https://api.elevenlabs.io/v1/user",
-                headers={"xi-api-key": ELEVENLABS_API_KEY}
-            )
-            results["checks"]["elevenlabs"] = {
-                "status": "ok" if response.status_code in [200, 401] else "error",
-                "reachable": True,
-                "authenticated": response.status_code == 200
-            }
-    except Exception as e:
-        results["checks"]["elevenlabs"] = {
-            "status": "error",
-            "reachable": False,
-            "error": str(e)
-        }
-    
-    # Overall status
-    all_ok = all(
-        check.get("status") == "ok" 
-        for check in results["checks"].values()
-    )
-    results["status"] = "healthy" if all_ok else "degraded"
-    
-    return JSONResponse(results)
+app.add_middleware(LoggingMiddleware)
 
 
 class VoiceSession:
     """
-    Manages a single voice conversation session.
-    Handles the full pipeline: Gladia (STT) -> LLM -> ElevenLabs (TTS)
+    Manages a single ultra-fast voice conversation session.
+    Pipeline: Google Speech V2 (Chirp 2) -> Llama 3.3 70B -> ElevenLabs Flash v2.5
+    Target latency: <1.5s end-to-end
     """
-    
-    # Reconnection settings
-    MAX_RECONNECT_ATTEMPTS = 3
-    RECONNECT_DELAY_BASE = 1.0  # Base delay in seconds
     
     def __init__(self, client_ws: WebSocket):
         self.client_ws = client_ws
@@ -262,21 +159,24 @@ class VoiceSession:
         self.is_listening = True  # Accepting user audio
         self.should_interrupt = False  # Barge-in detected
         self.session_active = True  # Session is still active
-        self.detected_language = "cs"  # Default to Czech, will auto-detect from STT
         
-        # Async tasks and connections
-        self.gladia_ws: Optional[WebSocket] = None
-        self.gladia_session_id: Optional[str] = None  # Gladia session ID for reconnection
-        self.elevenlabs_ws: Optional[WebSocket] = None
+        # Google Speech V2 client and streaming
+        self.speech_client: Optional[SpeechAsyncClient] = None
+        self.speech_stream: Optional[AsyncGenerator] = None
+        self.speech_request_queue: Optional[asyncio.Queue] = None
+        self.speech_receiver_task: Optional[asyncio.Task] = None
+        
+        # ElevenLabs connection
+        self.elevenlabs_ws: Optional[any] = None
         self.current_response_task: Optional[asyncio.Task] = None
-        self.gladia_receiver_task: Optional[asyncio.Task] = None
         
-        # Reconnection tracking
-        self.gladia_reconnect_attempts = 0
-        
-        # Text accumulator for LLM response
+        # Text accumulator for TTS pipeline
         self.pending_text = ""
-        self.text_send_task: Optional[asyncio.Task] = None
+        
+        # VAD (Voice Activity Detection) for silence timeout
+        self.last_speech_time = time.time()
+        self.vad_task: Optional[asyncio.Task] = None
+        self.pending_transcript = ""  # Accumulate interim transcripts
         
         # Session statistics
         self.stats = {
@@ -284,14 +184,13 @@ class VoiceSession:
             "messages_received": 0,
             "audio_chunks_sent": 0,
             "audio_chunks_received": 0,
-            "reconnections": 0,
         }
         
         # Inactivity tracking
         self.last_activity_time = asyncio.get_event_loop().time()
         self.inactivity_check_task: Optional[asyncio.Task] = None
         
-        logger.info("New voice session created")
+        logger.info("New ultra-fast voice session created")
     
     def update_activity(self):
         """Update the last activity timestamp."""
@@ -318,10 +217,6 @@ class VoiceSession:
                 })
                 self.session_active = False
                 break
-            elif inactive_duration > SESSION_INACTIVITY_TIMEOUT - 60:
-                # Warn client 60 seconds before timeout
-                remaining = SESSION_INACTIVITY_TIMEOUT - inactive_duration
-                logger.debug(f"Session will timeout in {remaining:.0f}s")
     
     async def send_to_client(self, message: dict):
         """Send JSON message to client."""
@@ -339,13 +234,13 @@ class VoiceSession:
             logger.error(f"Error sending audio to client: {e}")
     
     async def handle_barge_in(self):
-        """Handle user interruption (barge-in)."""
-        logger.info("Barge-in detected! Stopping current response...")
+        """Handle user interruption (barge-in) - ULTRA-FAST response."""
+        logger.info("⚡ BARGE-IN! Stopping current response immediately...")
         
         self.should_interrupt = True
         self.is_speaking = False
         
-        # Cancel current response generation
+        # Cancel current response generation (LLM)
         if self.current_response_task and not self.current_response_task.done():
             self.current_response_task.cancel()
             try:
@@ -353,10 +248,10 @@ class VoiceSession:
             except asyncio.CancelledError:
                 pass
         
-        # Send clear audio command to client
+        # Send clear audio command to client (stop playback)
         await self.send_to_client({"type": "clear_audio"})
         
-        # Close ElevenLabs connection to stop TTS
+        # Close ElevenLabs connection to stop TTS immediately
         if self.elevenlabs_ws:
             try:
                 await self.elevenlabs_ws.close()
@@ -368,16 +263,14 @@ class VoiceSession:
         self.should_interrupt = False
         self.pending_text = ""
         
-        logger.info("Barge-in handled, ready for new input")
+        logger.info("✅ Barge-in handled, ready for new input")
     
     async def generate_llm_response(self, user_text: str, is_greeting: bool = False):
-        """Generate streaming response from LLM."""
+        """Generate streaming response from Llama 3.3 70B (ultra-fast via DeepInfra)."""
         try:
             if is_greeting:
-                messages = [
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": user_text}
-                ]
+                # For greeting, just send hardcoded Czech text
+                return
             else:
                 # Add user message to history
                 self.conversation_history.append({
@@ -390,13 +283,13 @@ class VoiceSession:
                     *self.conversation_history
                 ]
             
-            logger.info(f"Generating LLM response for: {user_text[:50]}...")
+            logger.info(f"🧠 LLM generating response for: {user_text[:50]}...")
             
             stream = await openai_client.chat.completions.create(
                 model=LLM_MODEL,
                 messages=messages,
                 stream=True,
-                max_tokens=500,
+                max_tokens=300,  # Keep responses short for fast TTS
                 temperature=0.7,
             )
             
@@ -411,7 +304,7 @@ class VoiceSession:
                     token = chunk.choices[0].delta.content
                     full_response += token
                     
-                    # Send token to TTS pipeline
+                    # Send token to TTS pipeline immediately
                     await self.send_text_to_tts(token)
                     
                     # Also send transcript to client for display
@@ -432,7 +325,7 @@ class VoiceSession:
             })
             
             # Add to conversation history if not interrupted
-            if not self.should_interrupt and full_response and not is_greeting:
+            if not self.should_interrupt and full_response:
                 self.conversation_history.append({
                     "role": "assistant",
                     "content": full_response
@@ -440,30 +333,27 @@ class VoiceSession:
                 
                 # Trim conversation history to prevent memory issues
                 if len(self.conversation_history) > MAX_CONVERSATION_HISTORY:
-                    # Keep the most recent messages, preserving pairs if possible
                     self.conversation_history = self.conversation_history[-MAX_CONVERSATION_HISTORY:]
-                    logger.debug(f"Trimmed conversation history to {MAX_CONVERSATION_HISTORY} messages")
             
-            logger.info(f"LLM response complete: {len(full_response)} chars")
+            logger.info(f"✅ LLM response complete: {len(full_response)} chars")
             
         except asyncio.CancelledError:
             logger.info("LLM generation cancelled")
             raise
         except Exception as e:
             error = LLMError(str(e))
-            logger.error(f"Error generating LLM response: {e}")
+            logger.error(f"❌ Error generating LLM response: {e}")
             await self.send_to_client(error.to_dict())
     
     async def send_text_to_tts(self, text: str):
         """
         Accumulate text and send to TTS when we have enough for natural speech.
-        Implements optimistic pipelining - sends chunks as soon as possible.
+        Ultra-fast chunking for minimal latency.
         """
         self.pending_text += text
         
-        # Send on sentence boundaries or punctuation for natural speech
-        # Also send if we have accumulated enough text
-        send_markers = [".", "!", "?", ",", ";", ":", "\n"]
+        # Send on sentence boundaries for natural speech
+        send_markers = [".", "!", "?", ",", ";"]
         
         should_send = False
         for marker in send_markers:
@@ -471,8 +361,8 @@ class VoiceSession:
                 should_send = True
                 break
         
-        # Also send if we have enough text (for long sentences)
-        if len(self.pending_text) > 100:
+        # Also send if we have enough text
+        if len(self.pending_text) > 80:
             should_send = True
         
         if should_send and self.pending_text.strip():
@@ -482,7 +372,7 @@ class VoiceSession:
             # Normalize text for TTS
             normalized_text = normalize_text(text_to_send)
             
-            # Send to ElevenLabs
+            # Send to ElevenLabs Flash v2.5
             await self.stream_to_elevenlabs(normalized_text)
     
     async def flush_tts_buffer(self):
@@ -500,7 +390,7 @@ class VoiceSession:
                 pass
     
     async def connect_elevenlabs(self):
-        """Establish WebSocket connection to ElevenLabs."""
+        """Establish WebSocket connection to ElevenLabs Flash v2.5 (ultra-low latency)."""
         import websockets
         
         if self.elevenlabs_ws:
@@ -508,7 +398,8 @@ class VoiceSession:
         
         url = ELEVENLABS_WS_URL.format(
             voice_id=ELEVENLABS_VOICE_ID,
-            model_id=ELEVENLABS_MODEL
+            model_id=ELEVENLABS_MODEL,
+            latency=ELEVENLABS_OPTIMIZE_LATENCY
         )
         
         try:
@@ -517,17 +408,17 @@ class VoiceSession:
                 extra_headers={"xi-api-key": ELEVENLABS_API_KEY}
             )
             
-            # Send initial configuration
+            # Send initial configuration for Flash v2.5
             init_message = {
                 "text": " ",
                 "voice_settings": {
                     "stability": 0.5,
-                    "similarity_boost": 0.75,
+                    "similarity_boost": 0.8,
                     "style": 0.0,
                     "use_speaker_boost": True
                 },
                 "generation_config": {
-                    "chunk_length_schedule": [50, 80, 120, 150]
+                    "chunk_length_schedule": [50]  # Single value for Flash model (ultra-fast)
                 },
                 "xi_api_key": ELEVENLABS_API_KEY
             }
@@ -536,544 +427,534 @@ class VoiceSession:
             # Start receiving audio in background
             asyncio.create_task(self.receive_elevenlabs_audio())
             
-            logger.info("Connected to ElevenLabs")
+            logger.info("🎤 Connected to ElevenLabs Flash v2.5")
             
         except Exception as e:
-            logger.error(f"Error connecting to ElevenLabs: {e}")
+            logger.error(f"❌ Error connecting to ElevenLabs: {e}")
             self.elevenlabs_ws = None
     
     async def stream_to_elevenlabs(self, text: str):
-        """Stream text to ElevenLabs for TTS."""
-        if not text.strip():
-            return
-        
+        """Stream text to ElevenLabs for TTS generation."""
         if not self.elevenlabs_ws:
             await self.connect_elevenlabs()
         
-        if self.elevenlabs_ws:
+        if self.elevenlabs_ws and text.strip():
             try:
                 message = {
                     "text": text,
                     "try_trigger_generation": True
                 }
                 await self.elevenlabs_ws.send(json.dumps(message))
-                self.is_speaking = True
             except Exception as e:
-                logger.error(f"Error sending to ElevenLabs: {e}")
+                logger.error(f"Error streaming to ElevenLabs: {e}")
+                # Reconnect on error
                 self.elevenlabs_ws = None
+                await self.connect_elevenlabs()
     
     async def receive_elevenlabs_audio(self):
         """Receive audio chunks from ElevenLabs and forward to client."""
-        import base64
-        
         try:
             async for message in self.elevenlabs_ws:
                 if self.should_interrupt:
                     break
                 
-                data = json.loads(message)
-                
-                if "audio" in data and data["audio"]:
-                    # Decode base64 audio and send to client
-                    audio_bytes = base64.b64decode(data["audio"])
-                    await self.send_audio_to_client(audio_bytes)
-                
-                if data.get("isFinal"):
-                    self.is_speaking = False
-                    await self.send_to_client({"type": "audio_end"})
-                    # Tell client we're ready to listen again
-                    await self.send_to_client({"type": "listening"})
-                    logger.info("TTS audio finished, ready for next user input")
-                    break
-                    
+                # ElevenLabs sends both JSON (metadata) and binary (audio) messages
+                if isinstance(message, bytes):
+                    # Binary audio data
+                    await self.send_audio_to_client(message)
+                    self.stats["audio_chunks_received"] += 1
+                else:
+                    # JSON metadata (acknowledgments, errors, etc.)
+                    try:
+                        data = json.loads(message)
+                        if "error" in data and data["error"]:
+                            logger.error(f"ElevenLabs error: {data['error']}")
+                    except:
+                        pass
+        
         except Exception as e:
-            if not self.should_interrupt:
-                logger.error(f"Error receiving from ElevenLabs: {e}")
-        finally:
-            self.is_speaking = False
-            if self.elevenlabs_ws:
-                try:
-                    await self.elevenlabs_ws.close()
-                except:
-                    pass
-                self.elevenlabs_ws = None
+            logger.error(f"Error receiving from ElevenLabs: {e}")
     
-    async def init_gladia_session(self):
-        """Initialize a Gladia session and get WebSocket URL."""
-        logger.info("Initializing Gladia session...")
-        
+    async def init_google_speech(self):
+        """Initialize Google Cloud Speech V2 client with Chirp 2 configuration."""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "https://api.gladia.io/v2/live",
-                    headers={
-                        "Content-Type": "application/json",
-                        "x-gladia-key": GLADIA_API_KEY,
-                    },
-                    json={
-                        "encoding": "wav/pcm",
-                        "sample_rate": 16000,
-                        "bit_depth": 16,
-                        "channels": 1,
-                        "language_config": {
-                            "languages": ["sk", "cs"],  # Slovak and Czech
-                            "code_switching": True,  # Allow switching between languages
-                        },
-                        "messages_config": {
-                            "receive_partial_transcripts": True,  # Get interim results
-                        },
-                    },
-                    timeout=30.0,
-                )
-                
-                if response.status_code not in [200, 201]:
-                    error_text = response.text
-                    logger.error(f"Gladia init failed: {response.status_code} - {error_text}")
-                    raise STTError(f"Failed to initialize Gladia session: {response.status_code}")
-                
-                data = response.json()
-                self.gladia_session_id = data["id"]
-                ws_url = data["url"]
-                
-                logger.info(f"Gladia session initialized: {self.gladia_session_id}")
-                return ws_url
-                
-        except Exception as e:
-            logger.error(f"Error initializing Gladia session: {e}")
-            raise
-    
-    async def connect_gladia(self):
-        """Establish WebSocket connection to Gladia for STT."""
-        import websockets
-        
-        # Initialize session and get WebSocket URL
-        ws_url = await self.init_gladia_session()
-        
-        logger.info(f"Connecting to Gladia WebSocket...")
-        
-        try:
-            self.gladia_ws = await websockets.connect(
-                ws_url,
-                ping_interval=20,
-                ping_timeout=10,
+            # Create Speech client
+            self.speech_client = SpeechAsyncClient()
+            
+            # Configure streaming recognition with Chirp 2
+            recognition_config = cloud_speech.RecognitionConfig(
+                explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
+                    encoding=cloud_speech.ExplicitDecodingConfig.AudioEncoding.LINEAR16,
+                    sample_rate_hertz=AUDIO_SAMPLE_RATE,
+                    audio_channel_count=AUDIO_CHANNELS,
+                ),
+                language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK, cs-CZ
+                model=GOOGLE_SPEECH_MODEL,  # chirp_2
+                features=cloud_speech.RecognitionFeatures(
+                    enable_automatic_punctuation=True,
+                    enable_word_time_offsets=False,
+                ),
+                adaptation=cloud_speech.SpeechAdaptation(
+                    phrase_sets=[
+                        cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
+                            inline_phrase_set=cloud_speech.PhraseSet(
+                                phrases=[
+                                    cloud_speech.PhraseSet.Phrase(value=phrase, boost=GOOGLE_PHRASE_BOOST)
+                                    for phrase in GOOGLE_PHRASE_SETS
+                                ]
+                            )
+                        )
+                    ]
+                ),
             )
             
-            logger.info("Connected to Gladia successfully (SK/CZ auto-detection enabled)")
+            streaming_config = cloud_speech.StreamingRecognitionConfig(
+                config=recognition_config,
+                streaming_features=cloud_speech.StreamingRecognitionFeatures(
+                    interim_results=True,
+                ),
+            )
+            
+            # Create request queue for audio streaming
+            self.speech_request_queue = asyncio.Queue()
+            
+            # Start streaming recognition
+            self.speech_stream = await self.speech_client.streaming_recognize(
+                config=streaming_config,
+                config_request=cloud_speech.StreamingRecognizeRequest(
+                    recognizer=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/global/recognizers/_",
+                    streaming_config=streaming_config,
+                ),
+                requests=self._audio_request_generator(),
+            )
+            
+            # Start receiving transcripts in background
+            self.speech_receiver_task = asyncio.create_task(self.receive_google_transcripts())
+            
+            # Start VAD monitoring
+            self.vad_task = asyncio.create_task(self.monitor_vad())
+            
+            logger.info("✅ Google Speech V2 (Chirp 2) initialized")
             
         except Exception as e:
-            logger.error(f"Error connecting to Gladia: {e}")
-            self.gladia_ws = None
-            raise
+            logger.error(f"❌ Error initializing Google Speech: {e}")
+            raise STTError(f"Failed to initialize Google Speech V2: {e}")
     
-    async def receive_gladia_transcripts(self):
-        """Receive and process transcripts from Gladia with reconnection support."""
-        logger.info("Starting Gladia transcript receiver...")
-        message_count = 0
-        
-        while self.session_active:
+    async def _audio_request_generator(self):
+        """Generate streaming audio requests for Google Speech."""
+        while self.session_active and self.is_listening:
+            audio_chunk = await self.speech_request_queue.get()
+            if audio_chunk is None:  # Sentinel to stop
+                break
+            yield cloud_speech.StreamingRecognizeRequest(audio=audio_chunk)
+    
+    async def send_audio_to_google(self, audio_data: bytes):
+        """Send raw PCM audio to Google Speech V2."""
+        self.update_activity()
+        if self.speech_request_queue and self.is_listening:
             try:
-                if not self.gladia_ws:
-                    logger.warning("Gladia WebSocket not connected, attempting to reconnect...")
-                    await self.reconnect_gladia()
-                    if not self.gladia_ws:
-                        logger.error("Failed to reconnect to Gladia")
-                        break
+                await self.speech_request_queue.put(audio_data)
+                self.stats["audio_chunks_sent"] += 1
+            except Exception as e:
+                logger.error(f"Error sending audio to Google Speech: {e}")
+    
+    async def receive_google_transcripts(self):
+        """Receive and process transcripts from Google Speech V2."""
+        try:
+            async for response in self.speech_stream:
+                if not self.session_active:
+                    break
                 
-                logger.info("Listening for Gladia messages...")
-                async for message in self.gladia_ws:
-                    message_count += 1
-                    if message_count % 10 == 1:
-                        logger.debug(f"Gladia message #{message_count}")
-                    if not self.session_active:
-                        break
+                for result in response.results:
+                    if not result.alternatives:
+                        continue
                     
-                    self.stats["messages_received"] += 1
-                    data = json.loads(message)
+                    transcript = result.alternatives[0].transcript
+                    is_final = result.is_final
                     
-                    message_type = data.get("type")
+                    # Detect language from result
+                    language_code = result.language_code if result.language_code else "cs"
+                    language = language_code.split("-")[0]  # sk-SK -> sk
                     
-                    # Handle transcript messages
-                    if message_type == "transcript":
-                        transcript_data = data.get("data", {})
-                        utterance = transcript_data.get("utterance", {})
+                    logger.debug(f"📝 Transcript ({'final' if is_final else 'interim'}): {transcript}")
+                    
+                    if is_final:
+                        # Reset VAD timer on final transcript
+                        self.last_speech_time = time.time()
+                        self.pending_transcript = ""
                         
-                        transcript = utterance.get("text", "")
-                        is_final = transcript_data.get("is_final", False)
-                        detected_lang = utterance.get("language", "cs")  # Default to Czech
+                        # Send final transcript to client
+                        await self.send_to_client({
+                            "type": "user_text",
+                            "text": transcript,
+                            "is_final": True,
+                            "language": language
+                        })
                         
-                        # Update detected language for dynamic responses
-                        if detected_lang in ["sk", "cs"]:
-                            self.detected_language = detected_lang
-                            logger.info(f"Language detected: {detected_lang}")
-                        
-                        if transcript:
-                            # Send interim results to client
-                            await self.send_to_client({
-                                "type": "user_text",
-                                "text": transcript,
-                                "is_final": is_final,
-                                "language": detected_lang,
-                            })
-                            
-                            # Process final transcripts
-                            if is_final:
-                                logger.info(f"Final transcript ({detected_lang}): {transcript}")
-                                
-                                # Generate response (don't await - let it run in background)
-                                self.current_response_task = asyncio.create_task(
-                                    self.generate_llm_response(transcript)
-                                )
-                    
-                    # Handle speech started event (for barge-in)
-                    elif message_type == "speech_start":
-                        logger.info("Speech started detected")
+                        # Check if bot is speaking (barge-in detection)
                         if self.is_speaking:
                             await self.handle_barge_in()
-                    
-                    # Handle other Gladia events
-                    elif message_type == "speech_end":
-                        logger.info("Speech ended detected")
-                    
-                    elif message_type == "error":
-                        error_msg = data.get("data", {}).get("message", "Unknown error")
-                        logger.error(f"Gladia error: {error_msg}")
-                
-                # Connection closed normally, try to reconnect if session still active
-                if self.session_active:
-                    logger.warning("Gladia connection closed, attempting reconnection...")
-                    self.gladia_ws = None
-                    await self.reconnect_gladia()
                         
-            except Exception as e:
-                logger.error(f"Error receiving from Gladia: {e}")
-                self.gladia_ws = None
-                
-                if self.session_active:
-                    await self.reconnect_gladia()
-                    
-        # Cleanup
-        if self.gladia_ws:
-            try:
-                await self.gladia_ws.close()
-            except:
-                pass
-            self.gladia_ws = None
-    
-    async def reconnect_gladia(self):
-        """Attempt to reconnect to Gladia with exponential backoff."""
-        if not self.session_active:
-            return
+                        # Send to LLM for response
+                        logger.info(f"🎯 Final transcript ({language}): {transcript}")
+                        self.current_response_task = asyncio.create_task(
+                            self.generate_llm_response(transcript.strip())
+                        )
+                    else:
+                        # Interim transcript - accumulate for VAD
+                        self.pending_transcript = transcript
+                        self.last_speech_time = time.time()
+                        
+                        # Send interim to client for real-time display
+                        await self.send_to_client({
+                            "type": "user_text",
+                            "text": transcript,
+                            "is_final": False,
+                            "language": language
+                        })
         
-        self.gladia_reconnect_attempts += 1
-        
-        if self.gladia_reconnect_attempts > self.MAX_RECONNECT_ATTEMPTS:
-            error = STTError(f"Max reconnection attempts ({self.MAX_RECONNECT_ATTEMPTS}) reached")
-            logger.error(error.message)
-            await self.send_to_client(error.to_dict())
-            return
-        
-        delay = self.RECONNECT_DELAY_BASE * (2 ** (self.gladia_reconnect_attempts - 1))
-        logger.info(f"Reconnecting to Gladia (attempt {self.gladia_reconnect_attempts}) in {delay}s...")
-        
-        await asyncio.sleep(delay)
-        
-        try:
-            await self.connect_gladia()
-            self.gladia_reconnect_attempts = 0  # Reset on successful connection
-            self.stats["reconnections"] += 1
-            logger.info("Successfully reconnected to Gladia")
         except Exception as e:
-            logger.error(f"Reconnection to Gladia failed: {e}")
+            logger.error(f"❌ Error receiving Google transcripts: {e}")
+            logger.error(traceback.format_exc())
     
-    async def send_audio_to_gladia(self, audio_data: bytes):
-        """Forward audio data to Gladia."""
-        # Update activity on receiving audio from client
-        self.update_activity()
-        
-        if self.gladia_ws and self.is_listening:
-            try:
-                # Send audio as binary (Gladia accepts raw PCM)
-                await self.gladia_ws.send(audio_data)
-                self.stats["audio_chunks_sent"] += 1
-                # Log every 50 chunks
-                if self.stats["audio_chunks_sent"] % 50 == 0:
-                    logger.debug(f"Audio chunks sent to Gladia: {self.stats['audio_chunks_sent']}")
-            except Exception as e:
-                logger.error(f"Error sending to Gladia: {e}")
-                # Mark connection as closed to trigger reconnection
-                self.gladia_ws = None
-        elif not self.gladia_ws:
-            logger.warning("Cannot send audio - Gladia not connected")
-        elif not self.is_listening:
-            logger.debug("Not listening - audio ignored")
+    async def monitor_vad(self):
+        """
+        Monitor Voice Activity Detection.
+        Send accumulated transcript to LLM after VAD_SILENCE_TIMEOUT_MS of silence.
+        """
+        while self.session_active:
+            await asyncio.sleep(0.1)  # Check every 100ms
+            
+            if self.pending_transcript and not self.is_speaking:
+                silence_duration = (time.time() - self.last_speech_time) * 1000  # ms
+                
+                if silence_duration > VAD_SILENCE_TIMEOUT_MS:
+                    # Silence timeout reached - process accumulated transcript
+                    transcript = self.pending_transcript.strip()
+                    if transcript:
+                        logger.info(f"⏱️ VAD timeout ({silence_duration:.0f}ms) - processing: {transcript}")
+                        
+                        # Send to client as final
+                        await self.send_to_client({
+                            "type": "user_text",
+                            "text": transcript,
+                            "is_final": True,
+                            "language": "cs"  # Default to Czech
+                        })
+                        
+                        # Send to LLM
+                        self.current_response_task = asyncio.create_task(
+                            self.generate_llm_response(transcript)
+                        )
+                        
+                        self.pending_transcript = ""
     
     async def generate_greeting(self):
-        """Generate and speak the initial greeting."""
-        logger.info("Generating greeting...")
-        
-        # Connect to ElevenLabs and wait for connection
-        await self.connect_elevenlabs()
-        
-        # Wait a moment for WebSocket to be fully ready
-        await asyncio.sleep(0.5)
-        
-        # Get greeting text based on time of day and language (default Czech)
-        from datetime import datetime
-        now = datetime.now()
-        hour = now.hour
-        lang = self.detected_language  # Will auto-detect from first user input
-        
-        # Default greeting in Czech (will switch to Slovak if detected)
-        if 6 <= hour < 12:
-            greeting_text = "Dobré ráno, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
-        elif 12 <= hour < 18:
-            greeting_text = "Dobré odpoledne, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
-        elif 18 <= hour < 22:
-            greeting_text = "Dobrý večer, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
-        else:
-            greeting_text = "Dobrý večer, tady Alex z EniQ. Jak vám mohu dnes pomoci s automatizací vašich procesů?"
-        
-        # Send greeting text directly to client (for display)
-        await self.send_to_client({
-            "type": "assistant_text",
-            "text": greeting_text,
-            "is_final": True
-        })
-        
-        # Send greeting to TTS
+        """Generate initial greeting in Czech (hardcoded)."""
         try:
-            await self.stream_to_elevenlabs(greeting_text)
-            logger.info("Greeting sent to TTS successfully")
+            logger.info("🎉 Generating greeting...")
+            
+            # Get time-appropriate Czech greeting
+            greeting_text = get_greeting_text()
+            
+            logger.info(f"📢 Greeting: {greeting_text}")
+            
+            # Send greeting text to client
+            await self.send_to_client({
+                "type": "assistant_text",
+                "text": greeting_text,
+                "is_final": False
+            })
+            
+            # Connect to ElevenLabs
+            await self.connect_elevenlabs()
+            
+            # Wait a moment for connection
+            await asyncio.sleep(0.1)
+            
+            # Send greeting to TTS
+            normalized_greeting = normalize_text(greeting_text)
+            await self.stream_to_elevenlabs(normalized_greeting)
+            
+            # End of greeting
+            await asyncio.sleep(0.2)
+            await self.flush_tts_buffer()
+            
+            await self.send_to_client({
+                "type": "assistant_text",
+                "text": "",
+                "is_final": True
+            })
+            
+            logger.info("✅ Greeting complete")
+            
         except Exception as e:
-            logger.error(f"Error sending greeting to TTS: {e}")
-        
-        # Send listening status after greeting
-        await self.send_to_client({"type": "listening"})
+            logger.error(f"❌ Error generating greeting: {e}")
     
     async def start(self):
-        """Start the voice session."""
-        logger.info("Starting voice session...")
-        
-        # Connect to Gladia
+        """Start the voice session pipeline."""
         try:
-            await self.connect_gladia()
+            logger.info("🚀 Starting ultra-fast voice session...")
+            
+            # Initialize Google Speech V2
+            await self.init_google_speech()
+            
+            # Generate greeting
+            await self.generate_greeting()
+            
+            # Start inactivity monitoring
+            self.inactivity_check_task = asyncio.create_task(self.check_inactivity())
+            
+            logger.info("✅ Voice session started successfully")
+            
         except Exception as e:
-            error = ServiceConnectionError("Gladia", str(e))
-            logger.error(f"Failed to connect to Gladia: {e}")
-            await self.send_to_client(error.to_dict())
-            return
-        
-        # Start receiving transcripts in background
-        self.gladia_receiver_task = asyncio.create_task(
-            self.receive_gladia_transcripts()
-        )
-        
-        # Start inactivity checker
-        self.inactivity_check_task = asyncio.create_task(
-            self.check_inactivity()
-        )
-        
-        # Update activity timestamp
-        self.update_activity()
-        
-        await self.send_to_client({
-            "type": "session_started",
-            "message": "Voice session started"
-        })
-        
-        # Generate automatic greeting
-        logger.info("Generating automatic greeting...")
-        await self.generate_greeting()
-        
-        logger.info("Session ready - listening for user input")
+            logger.error(f"❌ Failed to start voice session: {e}")
+            logger.error(traceback.format_exc())
+            raise
     
     async def cleanup(self):
-        """Clean up all connections."""
-        logger.info("Cleaning up voice session...")
+        """Clean up all connections and tasks."""
+        logger.info("🧹 Cleaning up voice session...")
         
-        # Mark session as inactive to stop reconnection attempts
         self.session_active = False
         self.is_listening = False
         
-        # Cancel any running tasks
-        tasks_to_cancel = [
-            self.current_response_task,
-            self.gladia_receiver_task,
-            self.inactivity_check_task,
-        ]
-        
-        for task in tasks_to_cancel:
-            if task and not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-        
-        # Close WebSocket connections
-        if self.gladia_ws:
+        # Cancel VAD task
+        if self.vad_task:
+            self.vad_task.cancel()
             try:
-                # Send stop_recording message before closing
-                await self.gladia_ws.send(json.dumps({"type": "stop_recording"}))
-                await asyncio.sleep(0.1)  # Give Gladia time to process
-                await self.gladia_ws.close()
+                await self.vad_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Cancel inactivity check
+        if self.inactivity_check_task:
+            self.inactivity_check_task.cancel()
+            try:
+                await self.inactivity_check_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Cancel current response
+        if self.current_response_task and not self.current_response_task.done():
+            self.current_response_task.cancel()
+            try:
+                await self.current_response_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Stop Google Speech streaming
+        if self.speech_request_queue:
+            await self.speech_request_queue.put(None)  # Sentinel to stop
+        
+        if self.speech_receiver_task:
+            self.speech_receiver_task.cancel()
+            try:
+                await self.speech_receiver_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Close Google Speech client
+        if self.speech_client:
+            try:
+                await self.speech_client.close()
             except:
                 pass
-            self.gladia_ws = None
         
+        # Close ElevenLabs connection
         if self.elevenlabs_ws:
             try:
                 await self.elevenlabs_ws.close()
             except:
                 pass
-            self.elevenlabs_ws = None
         
-        # Log session statistics
-        logger.info(f"Session stats: {self.stats}")
-        logger.info("Voice session cleaned up")
+        logger.info(f"📊 Session stats: {self.stats}")
+        logger.info("✅ Voice session cleaned up")
 
 
-@app.websocket("/ws/audio")
-async def websocket_audio_endpoint(websocket: WebSocket):
-    """
-    Main WebSocket endpoint for audio streaming.
-    
-    Client Protocol:
-    - Send binary audio data (PCM 16-bit, 16kHz, mono)
-    - Receive binary audio data (MP3 from ElevenLabs)
-    - Receive JSON messages for control/text
-    
-    JSON Message Types:
-    - {"type": "session_started"} - Session is ready
-    - {"type": "user_text", "text": "...", "is_final": bool} - User transcript
-    - {"type": "assistant_text", "text": "...", "is_final": bool} - Assistant response
-    - {"type": "clear_audio"} - Clear audio buffer (barge-in)
-    - {"type": "audio_end"} - Audio stream complete
-    - {"type": "session_timeout"} - Session ended due to inactivity
-    - {"type": "error", "message": "..."} - Error occurred
-    """
+# FastAPI WebSocket endpoint
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """Main WebSocket endpoint for voice assistant."""
     await websocket.accept()
-    logger.info("WebSocket connection accepted")
+    logger.info("🔌 WebSocket connection accepted")
     
     session = VoiceSession(websocket)
     
     try:
-        # Start the session (connects to services, generates greeting)
+        # Start the session
         await session.start()
         
-        # Main receive loop - forward audio to Gladia
+        # Main message loop
         while session.session_active:
             try:
-                # Use a timeout to check session status periodically
-                data = await asyncio.wait_for(
+                message = await asyncio.wait_for(
                     websocket.receive(),
-                    timeout=5.0
+                    timeout=1.0
                 )
                 
-                # Check for disconnect
-                if data.get("type") == "websocket.disconnect":
-                    logger.info("WebSocket disconnect message received")
-                    break
+                if "bytes" in message:
+                    # Binary audio data from client
+                    audio_data = message["bytes"]
+                    await session.send_audio_to_google(audio_data)
                 
-                if "bytes" in data:
-                    # Audio data from client
-                    await session.send_audio_to_gladia(data["bytes"])
-                    
-                elif "text" in data:
+                elif "text" in message:
                     # JSON control message from client
-                    try:
-                        message = json.loads(data["text"])
-                        msg_type = message.get("type")
-                        
-                        if msg_type == "ping":
-                            await websocket.send_json({"type": "pong"})
-                            session.update_activity()
-                        
-                        elif msg_type == "stop":
-                            logger.info("Stop requested by client")
-                            break
-                            
-                    except json.JSONDecodeError:
-                        pass
-                        
+                    data = json.loads(message["text"])
+                    message_type = data.get("type")
+                    
+                    if message_type == "start":
+                        logger.info("▶️ Client requested start")
+                        session.is_listening = True
+                    
+                    elif message_type == "stop":
+                        logger.info("⏹️ Stop requested by client")
+                        session.is_listening = False
+                        break
+                    
+                    elif message_type == "ping":
+                        await session.send_to_client({"type": "pong"})
+            
             except asyncio.TimeoutError:
-                # Just a timeout, continue checking session status
-                logger.debug("Receive timeout, continuing...")
                 continue
             except WebSocketDisconnect:
-                logger.info("WebSocket disconnected by client")
+                logger.info("🔌 Client disconnected")
                 break
-            except Exception as e:
-                logger.error(f"Error in receive loop: {e}")
-                # Don't break on error, try to continue
-                continue
-                
+    
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        
+        logger.error(f"❌ WebSocket error: {e}")
+        logger.error(traceback.format_exc())
+    
     finally:
         await session.cleanup()
-        logger.info("WebSocket connection closed")
+        logger.info("🔌 WebSocket connection closed")
 
 
-# Error handlers
-@app.exception_handler(VoiceAssistantError)
-async def voice_assistant_error_handler(request: Request, exc: VoiceAssistantError):
-    """Handle custom voice assistant errors."""
-    logger.error(f"Voice assistant error: {exc.code} - {exc.message}")
-    logger.error(f"Request: {request.method} {request.url}")
-    return JSONResponse(
-        status_code=400,
-        content=exc.to_dict()
-    )
-
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """Handle unexpected errors with full traceback."""
-    # Get full traceback
-    tb_str = traceback.format_exc()
-    
-    # Log detailed error information
-    logger.error("=" * 60)
-    logger.error("UNHANDLED EXCEPTION - INTERNAL SERVER ERROR")
-    logger.error("=" * 60)
-    logger.error(f"Request: {request.method} {request.url}")
-    logger.error(f"Path: {request.url.path}")
-    logger.error(f"Headers: {dict(request.headers)}")
-    logger.error(f"Exception type: {type(exc).__name__}")
-    logger.error(f"Exception message: {exc}")
-    logger.error(f"Full traceback:\n{tb_str}")
-    logger.error("=" * 60)
-    
-    return JSONResponse(
-        status_code=500,
-        content={
-            "type": "error",
-            "code": "INTERNAL_ERROR",
-            "message": f"Internal server error: {type(exc).__name__}: {str(exc)}",
-            "traceback": tb_str
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint for Coolify."""
+    config = get_config_summary()
+    return JSONResponse({
+        "status": "healthy",
+        "service": "ultra-fast-voice-assistant",
+        "config": {
+            "llm_model": config["llm_model"],
+            "stt_service": config["stt_service"],
+            "stt_languages": config["stt_languages"],
+            "api_keys_configured": config["api_keys_configured"],
         }
-    )
+    })
 
 
-# STATIC FILE ROUTES - MUST BE ABSOLUTE LAST!
+# Detailed health check endpoint
+@app.get("/health/detailed")
+async def detailed_health_check():
+    """Detailed health check with service connectivity tests."""
+    results = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "checks": {}
+    }
+    
+    # Check Google Cloud credentials
+    try:
+        if os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+            results["checks"]["google_cloud"] = {
+                "status": "ok",
+                "credentials_file": "exists",
+                "project_id": GOOGLE_CLOUD_PROJECT_ID
+            }
+        else:
+            results["checks"]["google_cloud"] = {
+                "status": "error",
+                "credentials_file": "missing"
+            }
+            results["status"] = "degraded"
+    except Exception as e:
+        results["checks"]["google_cloud"] = {"status": "error", "error": str(e)}
+        results["status"] = "degraded"
+    
+    # Check OpenRouter connectivity
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+                timeout=5.0
+            )
+            results["checks"]["openrouter"] = {
+                "status": "ok" if response.status_code == 200 else "error",
+                "reachable": True
+            }
+    except Exception as e:
+        results["checks"]["openrouter"] = {"status": "error", "error": str(e)}
+        results["status"] = "degraded"
+    
+    # Check ElevenLabs API
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+                timeout=5.0
+            )
+            results["checks"]["elevenlabs"] = {
+                "status": "ok" if response.status_code == 200 else "error",
+                "reachable": True
+            }
+    except Exception as e:
+        results["checks"]["elevenlabs"] = {"status": "error", "error": str(e)}
+        results["status"] = "degraded"
+    
+    return JSONResponse(results)
+
+
+# Static file serving
+import os
+from pathlib import Path
+
+# Determine client directory path
+client_dir = Path(__file__).parent / "client"
+logger.info(f"Static file routes configured for {client_dir}")
+
+
 @app.get("/")
 async def serve_index():
-    """Serve index.html"""
+    """Serve the main index.html page."""
     logger.info("Serving index.html")
-    return FileResponse("/app/client/index.html")
+    index_path = client_dir / "index.html"
+    if not index_path.exists():
+        logger.error(f"index.html not found at {index_path}")
+        return JSONResponse({"error": "Frontend not found"}, status_code=404)
+    return FileResponse(index_path)
 
-logger.info("Static file routes configured for /app/client")
+
+@app.get("/{file_path:path}")
+async def serve_static_files(file_path: str):
+    """Serve static files from the client directory."""
+    file_full_path = client_dir / file_path
+    
+    if file_full_path.exists() and file_full_path.is_file():
+        return FileResponse(file_full_path)
+    
+    # If file doesn't exist and it's not a known API route, serve index.html (SPA fallback)
+    if not file_path.startswith(("ws", "health", "api")):
+        index_path = client_dir / "index.html"
+        if index_path.exists():
+            return FileResponse(index_path)
+    
+    return JSONResponse({"error": "Not found"}, status_code=404)
 
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting server via __main__")
+    from config import HOST, PORT
+    
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8080,
-        reload=True,
-        log_level="debug"
+        host=HOST,
+        port=PORT,
+        log_level="debug",
+        reload=False
     )

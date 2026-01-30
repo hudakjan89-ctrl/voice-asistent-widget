@@ -730,15 +730,16 @@ class VoiceSession:
                         if self.is_speaking:
                             await self.handle_barge_in()
                         
-                        # CRITICAL: Wait 700ms before responding to avoid jumping in too early
+                        # CRITICAL: Wait 1.5s before responding to avoid jumping in too early
                         # Google STT sends is_final=True quickly, but user might continue speaking
+                        # This gives user time to continue their thought/sentence
                         logger.info(f"🎯 Final transcript ({language}): {transcript}")
-                        logger.debug("⏳ Waiting 700ms to ensure user finished speaking...")
-                        await asyncio.sleep(0.7)
+                        logger.debug("⏳ Waiting 1.5s to ensure user finished speaking...")
+                        await asyncio.sleep(1.5)
                         
                         # Check if user started speaking again during the wait
                         time_since_last_speech = time.time() - self.last_speech_time
-                        if time_since_last_speech < 0.5:
+                        if time_since_last_speech < 1.2:
                             logger.debug("🔄 User continued speaking, skipping response")
                             continue
                         

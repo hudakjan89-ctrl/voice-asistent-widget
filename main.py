@@ -29,6 +29,7 @@ from google.api_core.client_options import ClientOptions
 from config import (
     GOOGLE_APPLICATION_CREDENTIALS,
     GOOGLE_CLOUD_PROJECT_ID,
+    GOOGLE_SPEECH_ENDPOINT,
     GOOGLE_SPEECH_LOCATION,
     GOOGLE_SPEECH_MODEL,
     GOOGLE_SPEECH_LANGUAGES,
@@ -604,20 +605,24 @@ class VoiceSession:
             logger.info(f"🎧 ElevenLabs audio receiver task ENDED (total messages: {message_count})")
     
     async def init_google_speech(self):
-        """Initialize Google Cloud Speech V2 client with 'long' model for 100% reliability."""
+        """Initialize Google Cloud Speech V2 client with Chirp 2 model (EU endpoint)."""
         try:
-            # Create Speech client (using default global endpoint for multi-language support)
-            # CRITICAL: Multi-language (sk-SK, cs-CZ) only supported in global location
-            self.speech_client = SpeechAsyncClient()
-            logger.info(f"🌍 Google Speech client endpoint: speech.googleapis.com (global)")
+            from google.api_core.client_options import ClientOptions
+            
+            # CRITICAL: Use EU endpoint for Chirp 2 (low latency for Slovak/Czech)
+            client_options = ClientOptions(api_endpoint=GOOGLE_SPEECH_ENDPOINT)
+            
+            # Create Speech client with EU endpoint
+            self.speech_client = SpeechAsyncClient(client_options=client_options)
+            logger.info(f"🌍 Google Speech client endpoint: {GOOGLE_SPEECH_ENDPOINT} (EU)")
             
             # Define recognizer path (required for V2 API)
-            # CRITICAL: Using global location to support multiple languages (sk-SK, cs-CZ)
+            # CRITICAL: Using EU location for Chirp 2 model
             self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_SPEECH_LOCATION}/recognizers/_"
             logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
-            # Configure recognition with 'long' model
-            # CRITICAL: Minimal config - 'long' model does NOT support features/adaptation
+            # Configure recognition with Chirp 2 model
+            # CRITICAL: Minimal config - Chirp 2 in V2 API requires minimal settings
             recognition_config = cloud_speech.RecognitionConfig(
                 explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
                     encoding=cloud_speech.ExplicitDecodingConfig.AudioEncoding.LINEAR16,
@@ -625,28 +630,30 @@ class VoiceSession:
                     audio_channel_count=AUDIO_CHANNELS,
                 ),
                 language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK, cs-CZ
-                model=GOOGLE_SPEECH_MODEL,  # long
-                # NO features block - not supported by this model
-                # NO adaptation block - not supported by this model
+                model=GOOGLE_SPEECH_MODEL,  # chirp_2
+                # NO features block - Chirp 2 in V2 API may not support it
+                # NO adaptation block - Chirp 2 in V2 API may not support it
             )
             
-            logger.info(f"⚙️ Using 'long' model with MINIMAL config (stable, multi-language)")
+            logger.info(f"⚙️ Using Chirp 2 model with MINIMAL config (EU endpoint, multi-language)")
             
             # Configure streaming with VAD settings
-            # CRITICAL: speech_end_timeout=1.2s allows 4-word sentences AND long 2-sentence phrases
+            # CRITICAL: enable_voice_activity_events=True is REQUIRED for Chirp 2!
+            # CRITICAL: speech_end_timeout=1.5s allows far-field mic and long phrases
             streaming_config = cloud_speech.StreamingRecognitionConfig(
                 config=recognition_config,
                 streaming_features=cloud_speech.StreamingRecognitionFeatures(
                     interim_results=True,  # For UI feedback only
-                    # VAD (Voice Activity Detection) settings for reliability
+                    enable_voice_activity_events=True,  # CRITICAL for Chirp 2!
+                    # VAD (Voice Activity Detection) settings for far-field microphone
                     voice_activity_timeout=cloud_speech.StreamingRecognitionFeatures.VoiceActivityTimeout(
                         speech_start_timeout={"seconds": 5},  # Wait up to 5s for speech to start
-                        speech_end_timeout={"seconds": 1, "nanos": 200000000},  # 1.2s of silence = end
+                        speech_end_timeout={"seconds": 1, "nanos": 500000000},  # 1.5s of silence = end
                     ),
                 ),
             )
             
-            logger.info(f"🎤 VAD configured: speech_end_timeout=1.2s (allows long phrases without cutoff)")
+            logger.info(f"🎤 Chirp 2 VAD configured: enable_voice_activity_events=True, speech_end_timeout=1.5s")
             
             # Store config for request generator
             self.streaming_config = streaming_config
@@ -668,8 +675,8 @@ class VoiceSession:
             # Start VAD monitoring
             self.vad_task = asyncio.create_task(self.monitor_vad())
             
-            logger.info(f"✅ Google Speech V2 ('long' model) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
-            logger.info(f"✅ High Reliability Config: VAD=1.2s, Multi-language=sk-SK+cs-CZ, Timer-debouncing=1.3s")
+            logger.info(f"✅ Google Speech V2 (Chirp 2 model) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
+            logger.info(f"✅ Chirp 2 Config: EU endpoint, VAD_events=ON, timeout=1.5s, Multi-language=sk-SK+cs-CZ")
             
         except Exception as e:
             logger.error(f"❌ Error initializing Google Speech: {e}")

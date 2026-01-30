@@ -147,10 +147,10 @@ ELEVENLABS_OUTPUT_FORMAT = "pcm_24000"  # PCM 24kHz 16-bit mono
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&optimize_streaming_latency={latency}&output_format={output_format}&auto_mode=true"
 
 # Google Cloud Speech V2 Configuration
-# CRITICAL: Reverting to "long" model in global for stability
-# Chirp 2 model has compatibility issues with Speech V2 API streaming
-GOOGLE_SPEECH_LOCATION = "global"  # Global location for multi-language support
-GOOGLE_SPEECH_MODEL = "long"  # Standard V2 model (stable, tested)
+# CRITICAL: Using Chirp 2 model with EU endpoint for Slovak/Czech optimization
+GOOGLE_SPEECH_ENDPOINT = "eu-speech.googleapis.com"  # EU endpoint for low latency
+GOOGLE_SPEECH_LOCATION = "eu"  # EU location for Chirp 2
+GOOGLE_SPEECH_MODEL = "chirp_2"  # Optimized for Slovak/Czech, far-field audio
 GOOGLE_SPEECH_LANGUAGES = ["sk-SK", "cs-CZ"]  # Support both Slovak and Czech
 GOOGLE_SPEECH_LANGUAGE_CODES = ["sk", "cs"]  # For auto-detection
 

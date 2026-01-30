@@ -621,29 +621,9 @@ class VoiceSession:
             self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_SPEECH_LOCATION}/recognizers/_"
             logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
-            # Configure Speech Adaptation for "EniQ" keyword
-            # CRITICAL: Boost "EniQ" with weight 20.0 to prevent mis-transcriptions
-            try:
-                phrase_set = cloud_speech.PhraseSet(
-                    phrases=[
-                        cloud_speech.PhraseSet.Phrase(value="EniQ", boost=20.0),
-                    ]
-                )
-                
-                adaptation = cloud_speech.SpeechAdaptation(
-                    phrase_sets=[
-                        cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
-                            inline_phrase_set=phrase_set
-                        )
-                    ]
-                )
-                logger.info(f"🎯 Speech Adaptation enabled: EniQ (boost=20.0)")
-            except Exception as adapt_err:
-                logger.warning(f"⚠️ Could not enable adaptation: {adapt_err}. Continuing without it.")
-                adaptation = None
-            
             # Configure recognition with latest_short model
-            # CRITICAL: Slovak ONLY to prevent language-mix hallucinations
+            # CRITICAL: Slovak ONLY to prevent language-mix hallucinations (including "EniQ")
+            # CRITICAL: NO adaptation - latest_short doesn't support speech_adaptation_boost
             recognition_config = cloud_speech.RecognitionConfig(
                 explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
                     encoding=cloud_speech.ExplicitDecodingConfig.AudioEncoding.LINEAR16,
@@ -652,10 +632,10 @@ class VoiceSession:
                 ),
                 language_codes=GOOGLE_SPEECH_LANGUAGES,  # sk-SK ONLY
                 model=GOOGLE_SPEECH_MODEL,  # latest_short
-                adaptation=adaptation if adaptation else None,  # Phrase boost for "EniQ"
+                # NO adaptation - latest_short doesn't support it
             )
             
-            logger.info(f"⚙️ Using latest_short model (GLOBAL endpoint, Slovak ONLY, EniQ boost)")
+            logger.info(f"⚙️ Using latest_short model (GLOBAL endpoint, Slovak ONLY, NO adaptation)")
             
             # Configure streaming with VAD settings
             # CRITICAL: enable_voice_activity_events=True for reliable VAD!

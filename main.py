@@ -605,19 +605,19 @@ class VoiceSession:
             logger.info(f"🎧 ElevenLabs audio receiver task ENDED (total messages: {message_count})")
     
     async def init_google_speech(self):
-        """Initialize Google Cloud Speech V2 client with Chirp 2 model (EU endpoint)."""
+        """Initialize Google Cloud Speech V2 client with Chirp 2 model (GLOBAL endpoint)."""
         try:
             from google.api_core.client_options import ClientOptions
             
-            # CRITICAL: Use EU endpoint for Chirp 2 (low latency for Slovak/Czech)
+            # CRITICAL: Use GLOBAL endpoint for Chirp 2 with multi-language support
             client_options = ClientOptions(api_endpoint=GOOGLE_SPEECH_ENDPOINT)
             
-            # Create Speech client with EU endpoint
+            # Create Speech client with GLOBAL endpoint
             self.speech_client = SpeechAsyncClient(client_options=client_options)
-            logger.info(f"🌍 Google Speech client endpoint: {GOOGLE_SPEECH_ENDPOINT} (EU)")
+            logger.info(f"🌍 Google Speech client endpoint: {GOOGLE_SPEECH_ENDPOINT} (GLOBAL)")
             
             # Define recognizer path (required for V2 API)
-            # CRITICAL: Using EU location for Chirp 2 model
+            # CRITICAL: Using GLOBAL location for Chirp 2 model
             self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_SPEECH_LOCATION}/recognizers/_"
             logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
@@ -635,7 +635,7 @@ class VoiceSession:
                 # NO adaptation block - Chirp 2 in V2 API may not support it
             )
             
-            logger.info(f"⚙️ Using Chirp 2 model with MINIMAL config (EU endpoint, multi-language)")
+            logger.info(f"⚙️ Using Chirp 2 model with MINIMAL config (GLOBAL endpoint, multi-language)")
             
             # Configure streaming with VAD settings
             # CRITICAL: enable_voice_activity_events=True is REQUIRED for Chirp 2!
@@ -676,7 +676,7 @@ class VoiceSession:
             self.vad_task = asyncio.create_task(self.monitor_vad())
             
             logger.info(f"✅ Google Speech V2 (Chirp 2 model) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
-            logger.info(f"✅ Chirp 2 Config: EU endpoint, VAD_events=ON, timeout=1.5s, Multi-language=sk-SK+cs-CZ")
+            logger.info(f"✅ Chirp 2 Config: GLOBAL endpoint, VAD_events=ON, timeout=1.5s, Multi-language=sk-SK+cs-CZ")
             
         except Exception as e:
             logger.error(f"❌ Error initializing Google Speech: {e}")

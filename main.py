@@ -468,14 +468,22 @@ class VoiceSession:
                 # ElevenLabs sends both JSON (metadata) and binary (audio) messages
                 if isinstance(message, bytes):
                     # Binary audio data
+                    chunk_size = len(message)
+                    logger.debug(f"🔊 Received audio chunk from ElevenLabs: {chunk_size} bytes")
                     await self.send_audio_to_client(message)
                     self.stats["audio_chunks_received"] += 1
+                    
+                    # Log every 10 chunks at INFO level for visibility
+                    if self.stats["audio_chunks_received"] % 10 == 0:
+                        logger.info(f"📦 Received {self.stats['audio_chunks_received']} audio chunks from ElevenLabs")
                 else:
                     # JSON metadata (acknowledgments, errors, etc.)
                     try:
                         data = json.loads(message)
                         if "error" in data and data["error"]:
-                            logger.error(f"ElevenLabs error: {data['error']}")
+                            logger.error(f"❌ ElevenLabs error: {data['error']}")
+                        else:
+                            logger.debug(f"📨 ElevenLabs metadata: {data}")
                     except:
                         pass
         
@@ -492,6 +500,9 @@ class VoiceSession:
             self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/global/recognizers/_"
             
             # Configure streaming recognition with Chirp 2
+            logger.info(f"📝 Phrase adaptation enabled: {len(GOOGLE_PHRASE_SETS)} phrases with boost={GOOGLE_PHRASE_BOOST}")
+            logger.debug(f"   Boosted phrases: {', '.join(GOOGLE_PHRASE_SETS[:5])}...")
+            
             recognition_config = cloud_speech.RecognitionConfig(
                 explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
                     encoding=cloud_speech.ExplicitDecodingConfig.AudioEncoding.LINEAR16,
@@ -531,8 +542,9 @@ class VoiceSession:
             # Create request queue for audio streaming
             self.speech_request_queue = asyncio.Queue()
             
-            # streaming_recognize returns an async iterator
-            # We store it for use in receive_google_transcripts
+            # CRITICAL FIX: streaming_recognize() may return a coroutine in some Speech V2 versions
+            # We don't await it here - the async iterator is used directly in receive_google_transcripts
+            # The method returns an AsyncIterable that can be used with 'async for'
             self.speech_stream = self.speech_client.streaming_recognize(
                 requests=self._audio_request_generator()
             )
@@ -583,7 +595,14 @@ class VoiceSession:
     async def receive_google_transcripts(self):
         """Receive and process transcripts from Google Speech V2."""
         try:
-            # Iterate directly over the async iterator returned by streaming_recognize
+            # CRITICAL FIX: In Speech V2 API, streaming_recognize may return a coroutine
+            # Check if it's a coroutine and await it first to get the actual async iterator
+            import inspect
+            if inspect.iscoroutine(self.speech_stream):
+                logger.debug("⚠️ speech_stream is coroutine, awaiting to get async iterator...")
+                self.speech_stream = await self.speech_stream
+            
+            # Now iterate over the async iterator
             async for response in self.speech_stream:
                 if not self.session_active:
                     break

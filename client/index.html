@@ -381,10 +381,23 @@
             if (!audioContext) {
                 // Use default sample rate (browser will handle MP3 decoding)
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log(`AudioContext created: state=${audioContext.state}, sampleRate=${audioContext.sampleRate}Hz`, 'success');
             }
             
+            // CRITICAL: Resume AudioContext if suspended (requires user interaction)
             if (audioContext.state === 'suspended') {
-                await audioContext.resume();
+                log('AudioContext suspended, attempting to resume...', 'info');
+                try {
+                    await audioContext.resume();
+                    log(`✅ AudioContext resumed: state=${audioContext.state}`, 'success');
+                } catch (error) {
+                    log(`❌ Failed to resume AudioContext: ${error.message}`, 'error');
+                }
+            }
+            
+            // Double-check state
+            if (audioContext.state !== 'running') {
+                log(`⚠️ WARNING: AudioContext not running (state=${audioContext.state}). Audio may not play!`, 'error');
             }
         }
 
@@ -396,7 +409,10 @@
 
             try {
                 const arrayBuffer = audioData instanceof ArrayBuffer ? audioData : audioData.buffer;
+                log(`🔊 Decoding audio chunk: ${arrayBuffer.byteLength} bytes`);
+                
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+                log(`✅ Audio decoded: duration=${audioBuffer.duration.toFixed(2)}s, channels=${audioBuffer.numberOfChannels}`, 'success');
                 
                 const source = audioContext.createBufferSource();
                 source.buffer = audioBuffer;
@@ -406,11 +422,13 @@
                 setStatus('speaking', 'Asistent mluví...');
                 
                 source.onended = () => {
+                    log('Audio chunk playback finished');
                     playNextInQueue();
                 };
                 
             } catch (error) {
-                log(`Error playing audio: ${error.message}`, 'error');
+                log(`❌ Error playing audio: ${error.message}`, 'error');
+                log(`   AudioContext state: ${audioContext?.state}`, 'error');
                 playNextInQueue();
             }
         }
@@ -418,6 +436,7 @@
         // Queue audio for sequential playback
         function queueAudio(audioData) {
             audioQueue.push(audioData);
+            log(`📥 Audio chunk queued: ${audioData.byteLength} bytes (queue size: ${audioQueue.length})`);
             if (!isPlayingAudio) {
                 playNextInQueue();
             }

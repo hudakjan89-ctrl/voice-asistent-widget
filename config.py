@@ -145,6 +145,8 @@ ELEVENLABS_OPTIMIZE_LATENCY = 4  # Maximum streaming optimization
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&optimize_streaming_latency={latency}"
 
 # Google Cloud Speech V2 Configuration (Chirp 2)
+# CRITICAL: Chirp 2 model only available in us-central1 location!
+GOOGLE_SPEECH_LOCATION = "us-central1"  # Chirp 2 requires us-central1 (not 'global')
 GOOGLE_SPEECH_MODEL = "chirp_2"  # Latest Chirp model with best accuracy
 GOOGLE_SPEECH_LANGUAGES = ["sk-SK", "cs-CZ"]  # Support both Slovak and Czech
 GOOGLE_SPEECH_LANGUAGE_CODES = ["sk", "cs"]  # For auto-detection

@@ -229,9 +229,79 @@
         .debug-info .log-entry.success {
             color: #4ade80;
         }
+
+        /* CRITICAL: Big unmute overlay for iOS/Android autoplay policy */
+        .unmute-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .unmute-overlay.hidden {
+            display: none;
+        }
+
+        .unmute-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 40px 80px;
+            font-size: 32px;
+            font-weight: 700;
+            border-radius: 20px;
+            cursor: pointer;
+            box-shadow: 0 20px 60px rgba(102, 126, 234, 0.6);
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .unmute-button:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 25px 70px rgba(102, 126, 234, 0.7);
+        }
+
+        .unmute-button:active {
+            transform: translateY(-2px);
+        }
+
+        .unmute-subtitle {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 18px;
+            margin-top: 30px;
+            text-align: center;
+            max-width: 600px;
+        }
+
+        .unmute-icon {
+            font-size: 80px;
+            margin-bottom: 30px;
+            animation: pulse 2s infinite;
+        }
     </style>
 </head>
 <body>
+    <!-- CRITICAL: Unmute overlay for iOS/Android autoplay -->
+    <div class="unmute-overlay" id="unmuteOverlay">
+        <div class="unmute-icon">🔊</div>
+        <button class="unmute-button" id="unmuteButton">SPUSTIŤ ASISTENTA</button>
+        <p class="unmute-subtitle">Kliknutím povolíte hlasové funkcie a pripojíte sa k asistentovi</p>
+    </div>
+
     <div class="container">
         <h1>⚡ Ultra-Fast Voice AI</h1>
         <p class="subtitle">Google Speech V2 • Llama 3.3 70B • ElevenLabs Flash v2.5</p>
@@ -284,6 +354,8 @@
         let currentAssistantText = '';
 
         // DOM Elements
+        const unmuteOverlay = document.getElementById('unmuteOverlay');
+        const unmuteButton = document.getElementById('unmuteButton');
         const startButton = document.getElementById('startButton');
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
@@ -683,13 +755,43 @@
             }
         }
 
-        // Start session
+        // CRITICAL: First unmute - called when user clicks big unmute button
+        async function unmute() {
+            try {
+                log('🔊 Unmuting audio and initializing...', 'info');
+                unmuteButton.disabled = true;
+                unmuteButton.textContent = 'INICIALIZUJEM...';
+                
+                // CRITICAL: Initialize AudioContext FIRST (requires user interaction)
+                await initAudioPlayback();
+                
+                // Verify AudioContext is running
+                if (!audioContext || audioContext.state !== 'running') {
+                    throw new Error(`AudioContext not running (state: ${audioContext?.state})`);
+                }
+                
+                log('✅ AudioContext ready, starting session...', 'success');
+                
+                // Hide unmute overlay
+                unmuteOverlay.classList.add('hidden');
+                
+                // Auto-start the session
+                await start();
+                
+            } catch (error) {
+                log(`❌ Unmute error: ${error.message}`, 'error');
+                unmuteButton.disabled = false;
+                unmuteButton.textContent = 'SKÚSIŤ ZNOVA';
+            }
+        }
+
+        // Start session (called after unmute)
         async function start() {
             try {
                 startButton.disabled = true;
                 
-                // Initialize audio playback context (needs user interaction)
-                await initAudioPlayback();
+                // AudioContext already initialized in unmute()
+                log('AudioContext already initialized, connecting...', 'info');
                 
                 // Get microphone access
                 if (!await initMicrophone()) {
@@ -753,16 +855,21 @@
             }
         }
 
-        // Heartbeat to keep connection alive
+        // Heartbeat to keep connection alive (reduced to 20s to match server)
         setInterval(() => {
             if (websocket && websocket.readyState === WebSocket.OPEN) {
                 websocket.send(JSON.stringify({ type: 'ping' }));
             }
-        }, 30000);
+        }, 20000);
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             initVisualizer();
+            
+            // CRITICAL: Unmute button handler - first user interaction
+            unmuteButton.addEventListener('click', unmute);
+            
+            // Regular start/stop button
             startButton.addEventListener('click', toggle);
             
             // Log environment info
@@ -774,20 +881,23 @@
             if (!window.isSecureContext) {
                 log('ERROR: Stránka nie je v secure context!', 'error');
                 log('Mikrofón vyžaduje HTTPS. Použi https:// URL', 'error');
-                startButton.disabled = true;
+                unmuteButton.disabled = true;
+                unmuteButton.textContent = 'HTTPS REQUIRED';
             } else if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 log('getUserMedia nie je dostupné', 'error');
                 log('Skús obnoviť stránku alebo povoliť mikrofón v nastaveniach', 'error');
-                startButton.disabled = true;
+                unmuteButton.disabled = true;
+                unmuteButton.textContent = 'MIKROFÓN NEDOSTUPNÝ';
             }
             
             if (!window.WebSocket) {
                 log('WebSocket nie je podporovaný', 'error');
-                startButton.disabled = true;
+                unmuteButton.disabled = true;
+                unmuteButton.textContent = 'WEBSOCKET NEPODPOROVANÝ';
             }
             
-            if (!startButton.disabled) {
-                log('Klient pripravený - klikni Spustit', 'success');
+            if (!unmuteButton.disabled) {
+                log('✅ Klient pripravený - klikni SPUSTIŤ ASISTENTA', 'success');
             }
         });
     </script>

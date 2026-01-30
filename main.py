@@ -28,6 +28,7 @@ from google.api_core.client_options import ClientOptions
 from config import (
     GOOGLE_APPLICATION_CREDENTIALS,
     GOOGLE_CLOUD_PROJECT_ID,
+    GOOGLE_SPEECH_LOCATION,
     GOOGLE_SPEECH_MODEL,
     GOOGLE_SPEECH_LANGUAGES,
     GOOGLE_PHRASE_SETS,
@@ -191,6 +192,9 @@ class VoiceSession:
         self.last_activity_time = asyncio.get_event_loop().time()
         self.inactivity_check_task: Optional[asyncio.Task] = None
         
+        # WebSocket keep-alive
+        self.keepalive_task: Optional[asyncio.Task] = None
+        
         logger.info("New ultra-fast voice session created")
     
     def update_activity(self):
@@ -217,6 +221,23 @@ class VoiceSession:
                     "message": "Session ended due to inactivity"
                 })
                 self.session_active = False
+                break
+    
+    async def send_keepalive(self):
+        """Send periodic ping to keep WebSocket connection alive."""
+        ping_interval = 20  # Send ping every 20 seconds
+        
+        while self.session_active:
+            await asyncio.sleep(ping_interval)
+            
+            if not self.session_active:
+                break
+            
+            try:
+                await self.send_to_client({"type": "ping"})
+                logger.debug("📡 Sent keepalive ping to client")
+            except Exception as e:
+                logger.warning(f"Failed to send keepalive: {e}")
                 break
     
     async def send_to_client(self, message: dict):
@@ -497,7 +518,9 @@ class VoiceSession:
             self.speech_client = SpeechAsyncClient()
             
             # Define recognizer path (required for V2 API)
-            self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/global/recognizers/_"
+            # CRITICAL: Chirp 2 model only available in us-central1 location!
+            self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_SPEECH_LOCATION}/recognizers/_"
+            logger.info(f"📍 Google Speech recognizer: {self.recognizer_path}")
             
             # Configure streaming recognition with Chirp 2
             logger.info(f"📝 Phrase adaptation enabled: {len(GOOGLE_PHRASE_SETS)} phrases with boost={GOOGLE_PHRASE_BOOST}")
@@ -755,6 +778,10 @@ class VoiceSession:
             # Start inactivity monitoring
             self.inactivity_check_task = asyncio.create_task(self.check_inactivity())
             
+            # Start WebSocket keep-alive (ping every 20s)
+            self.keepalive_task = asyncio.create_task(self.send_keepalive())
+            logger.info("📡 WebSocket keep-alive started (ping every 20s)")
+            
             logger.info("✅ Voice session started successfully")
             
         except Exception as e:
@@ -782,6 +809,14 @@ class VoiceSession:
             self.inactivity_check_task.cancel()
             try:
                 await self.inactivity_check_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Cancel keep-alive task
+        if self.keepalive_task:
+            self.keepalive_task.cancel()
+            try:
+                await self.keepalive_task
             except asyncio.CancelledError:
                 pass
         

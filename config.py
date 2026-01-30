@@ -14,7 +14,7 @@ load_dotenv()
 
 # API Keys
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/app/google-credentials.json")
-GOOGLE_CLOUD_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "")
+GOOGLE_CLOUD_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "").strip()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 
@@ -27,8 +27,19 @@ def validate_api_keys() -> dict:
     Returns a dict with validation results for each service.
     Raises ConfigurationError if critical keys are missing.
     """
+    # Check Google Cloud credentials
+    google_creds_exist = os.path.exists(GOOGLE_APPLICATION_CREDENTIALS)
+    google_project_set = bool(GOOGLE_CLOUD_PROJECT_ID)
+    
     results = {
-        "google_cloud": {"configured": bool(GOOGLE_CLOUD_PROJECT_ID and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS)), "service": "STT"},
+        "google_cloud": {
+            "configured": google_creds_exist and google_project_set,
+            "service": "STT",
+            "details": {
+                "credentials_file": google_creds_exist,
+                "project_id": google_project_set
+            }
+        },
         "openrouter": {"configured": bool(OPENROUTER_API_KEY), "service": "LLM"},
         "elevenlabs": {"configured": bool(ELEVENLABS_API_KEY), "service": "TTS"},
     }
@@ -52,8 +63,10 @@ def get_config_summary() -> dict:
     """Return a summary of current configuration (without sensitive data)."""
     return {
         "llm_model": LLM_MODEL,
+        "llm_provider": "OpenRouter",
         "stt_service": "Google Cloud Speech V2 (Chirp 2)",
         "stt_languages": "sk-SK, cs-CZ (auto-detect)",
+        "google_project_id": GOOGLE_CLOUD_PROJECT_ID,
         "elevenlabs_voice_id": ELEVENLABS_VOICE_ID,
         "elevenlabs_model": ELEVENLABS_MODEL,
         "host": HOST,
@@ -66,8 +79,8 @@ def get_config_summary() -> dict:
     }
 
 # LLM Configuration
-# Using Llama 3.3 70B Instruct via OpenRouter (DeepInfra Turbo provider)
-LLM_MODEL = os.getenv("LLM_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+# Using Llama 3.1 70B via OpenRouter (understands SK/CZ, responds ONLY in Czech)
+LLM_MODEL = os.getenv("LLM_MODEL", "meta-llama/llama-3.1-70b-instruct")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # ElevenLabs Configuration (Flash v2.5 for ultra-low latency)

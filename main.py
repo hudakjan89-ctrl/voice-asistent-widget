@@ -34,13 +34,13 @@ from config import (
     GOOGLE_PHRASE_BOOST,
     VAD_SILENCE_TIMEOUT_MS,
     OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     ELEVENLABS_MODEL,
     ELEVENLABS_WS_URL,
     ELEVENLABS_OPTIMIZE_LATENCY,
     LLM_MODEL,
-    OPENROUTER_BASE_URL,
     SESSION_INACTIVITY_TIMEOUT,
     MAX_CONVERSATION_HISTORY,
     AUDIO_SAMPLE_RATE,
@@ -84,8 +84,9 @@ logger.info(f"Working directory: {__file__}")
 # Set Google Cloud credentials from environment
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_APPLICATION_CREDENTIALS
 logger.info(f"Google Cloud credentials: {GOOGLE_APPLICATION_CREDENTIALS}")
+logger.info(f"Google Cloud Project ID: {GOOGLE_CLOUD_PROJECT_ID}")
 
-# OpenRouter client (OpenAI compatible)
+# OpenRouter client (OpenAI-compatible API for Llama 3.1 70B)
 openai_client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url=OPENROUTER_BASE_URL,
@@ -266,7 +267,7 @@ class VoiceSession:
         logger.info("✅ Barge-in handled, ready for new input")
     
     async def generate_llm_response(self, user_text: str, is_greeting: bool = False):
-        """Generate streaming response from Llama 3.3 70B (ultra-fast via DeepInfra)."""
+        """Generate streaming response from Llama 3.1 70B (via OpenRouter - ultra-fast)."""
         try:
             if is_greeting:
                 # For greeting, just send hardcoded Czech text
@@ -283,7 +284,7 @@ class VoiceSession:
                     *self.conversation_history
                 ]
             
-            logger.info(f"🧠 LLM generating response for: {user_text[:50]}...")
+            logger.info(f"🧠 LLM (Llama 3.1 70B) generating response for: {user_text[:50]}...")
             
             stream = await openai_client.chat.completions.create(
                 model=LLM_MODEL,
@@ -481,6 +482,9 @@ class VoiceSession:
             # Create Speech client
             self.speech_client = SpeechAsyncClient()
             
+            # Define recognizer path (required for V2 API)
+            self.recognizer_path = f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/global/recognizers/_"
+            
             # Configure streaming recognition with Chirp 2
             recognition_config = cloud_speech.RecognitionConfig(
                 explicit_decoding_config=cloud_speech.ExplicitDecodingConfig(
@@ -515,17 +519,15 @@ class VoiceSession:
                 ),
             )
             
+            # Store config for request generator
+            self.streaming_config = streaming_config
+            
             # Create request queue for audio streaming
             self.speech_request_queue = asyncio.Queue()
             
-            # Start streaming recognition
-            self.speech_stream = await self.speech_client.streaming_recognize(
-                config=streaming_config,
-                config_request=cloud_speech.StreamingRecognizeRequest(
-                    recognizer=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/global/recognizers/_",
-                    streaming_config=streaming_config,
-                ),
-                requests=self._audio_request_generator(),
+            # Start streaming recognition with corrected API call
+            self.speech_stream = self.speech_client.streaming_recognize(
+                requests=self._audio_request_generator()
             )
             
             # Start receiving transcripts in background
@@ -534,14 +536,26 @@ class VoiceSession:
             # Start VAD monitoring
             self.vad_task = asyncio.create_task(self.monitor_vad())
             
-            logger.info("✅ Google Speech V2 (Chirp 2) initialized")
+            logger.info(f"✅ Google Speech V2 (Chirp 2) initialized for project: {GOOGLE_CLOUD_PROJECT_ID}")
             
         except Exception as e:
             logger.error(f"❌ Error initializing Google Speech: {e}")
+            logger.error(traceback.format_exc())
             raise STTError(f"Failed to initialize Google Speech V2: {e}")
     
     async def _audio_request_generator(self):
-        """Generate streaming audio requests for Google Speech."""
+        """
+        Generate streaming audio requests for Google Speech V2.
+        First request must contain recognizer and streaming_config.
+        Subsequent requests contain only audio data.
+        """
+        # First request: recognizer + config
+        yield cloud_speech.StreamingRecognizeRequest(
+            recognizer=self.recognizer_path,
+            streaming_config=self.streaming_config
+        )
+        
+        # Subsequent requests: audio only
         while self.session_active and self.is_listening:
             audio_chunk = await self.speech_request_queue.get()
             if audio_chunk is None:  # Sentinel to stop

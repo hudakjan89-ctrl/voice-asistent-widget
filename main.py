@@ -184,6 +184,7 @@ class VoiceSession:
         self.vad_task: Optional[asyncio.Task] = None
         self.pending_transcript = ""  # Accumulate interim transcripts
         self.accumulated_transcript = ""  # Accumulate multiple is_final transcripts
+        self.processing_final = False  # Lock to prevent concurrent is_final processing
         
         # Session statistics
         self.stats = {
@@ -294,6 +295,8 @@ class VoiceSession:
         # Reset state
         self.should_interrupt = False
         self.pending_text = ""
+        self.first_sentence_buffer = ""
+        self.first_sentence_sent = False
         
         logger.info("✅ Barge-in handled, ready for new input")
     
@@ -779,6 +782,22 @@ class VoiceSession:
                     logger.debug(f"📝 Transcript ({'final' if is_final else 'interim'}): {transcript}")
                     
                     if is_final:
+                        # CRITICAL: If already processing a final transcript, just accumulate
+                        if self.processing_final:
+                            # Another is_final came while processing previous one
+                            # Just update the accumulated transcript and continue
+                            if transcript.strip():
+                                if self.accumulated_transcript:
+                                    self.accumulated_transcript += " " + transcript.strip()
+                                else:
+                                    self.accumulated_transcript = transcript.strip()
+                                logger.info(f"📝 Accumulated during processing: '{self.accumulated_transcript}'")
+                            self.last_speech_time = time.time()
+                            continue
+                        
+                        # Mark that we're processing a final transcript
+                        self.processing_final = True
+                        
                         # Update speech time
                         self.last_speech_time = time.time()
                         self.last_final_time = time.time()
@@ -856,6 +875,21 @@ class VoiceSession:
                         if self.accumulated_transcript.strip():
                             logger.info(f"✅ SENDING TO LLM ({language}): '{self.accumulated_transcript}'")
                             
+                            # CRITICAL: Cancel previous LLM response if still running
+                            # This prevents duplicate/fragmented responses when user speaks again quickly
+                            if self.current_response_task and not self.current_response_task.done():
+                                logger.warning("🛑 Cancelling previous LLM response (user spoke again)")
+                                self.current_response_task.cancel()
+                                try:
+                                    await self.current_response_task
+                                except asyncio.CancelledError:
+                                    pass
+                            
+                            # Reset buffers and state for new response
+                            self.pending_text = ""
+                            self.first_sentence_buffer = ""
+                            self.first_sentence_sent = False
+                            
                             # Send to LLM for response
                             self.current_response_task = asyncio.create_task(
                                 self.generate_llm_response(self.accumulated_transcript.strip())
@@ -865,6 +899,9 @@ class VoiceSession:
                             self.accumulated_transcript = ""
                         else:
                             logger.debug("⚠️ Accumulated transcript empty, skipping LLM")
+                        
+                        # Release lock
+                        self.processing_final = False
                     else:
                         # Interim transcript - accumulate for VAD
                         self.pending_transcript = transcript

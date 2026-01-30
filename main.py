@@ -514,8 +514,13 @@ class VoiceSession:
     async def init_google_speech(self):
         """Initialize Google Cloud Speech V2 client with Chirp 2 configuration."""
         try:
-            # Create Speech client
-            self.speech_client = SpeechAsyncClient()
+            # Create Speech client with regional endpoint
+            # CRITICAL: Must use regional endpoint matching recognizer location
+            regional_endpoint = f"{GOOGLE_SPEECH_LOCATION}-speech.googleapis.com"
+            self.speech_client = SpeechAsyncClient(
+                client_options=ClientOptions(api_endpoint=regional_endpoint)
+            )
+            logger.info(f"🌍 Google Speech client endpoint: {regional_endpoint}")
             
             # Define recognizer path (required for V2 API)
             # CRITICAL: Chirp 2 model only available in us-central1 location!

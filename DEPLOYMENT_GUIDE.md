@@ -94,8 +94,8 @@ ELEVENLABS_API_KEY=sk_xxxxx
 # LLM Model (default: Llama 3.1 70B via OpenRouter)
 LLM_MODEL=meta-llama/llama-3.1-70b-instruct
 
-# Voice (default: Adam)
-ELEVENLABS_VOICE_ID=pNInz6obpg8ndclK7Ab3
+# Voice (default: Rachel)
+ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 
 # Server
 HOST=0.0.0.0

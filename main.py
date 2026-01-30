@@ -395,7 +395,7 @@ class VoiceSession:
         import websockets
         
         if self.elevenlabs_ws:
-            return
+            return True
         
         url = ELEVENLABS_WS_URL.format(
             voice_id=ELEVENLABS_VOICE_ID,
@@ -404,6 +404,7 @@ class VoiceSession:
         )
         
         try:
+            logger.info("🔌 Connecting to ElevenLabs WebSocket...")
             self.elevenlabs_ws = await websockets.connect(
                 url,
                 extra_headers={"xi-api-key": ELEVENLABS_API_KEY}
@@ -425,14 +426,19 @@ class VoiceSession:
             }
             await self.elevenlabs_ws.send(json.dumps(init_message))
             
+            # Wait for WebSocket to be fully ready (handshake complete)
+            await asyncio.sleep(0.3)
+            
             # Start receiving audio in background
             asyncio.create_task(self.receive_elevenlabs_audio())
             
-            logger.info("🎤 Connected to ElevenLabs Flash v2.5")
+            logger.info("✅ ElevenLabs WebSocket connected and ready")
+            return True
             
         except Exception as e:
             logger.error(f"❌ Error connecting to ElevenLabs: {e}")
             self.elevenlabs_ws = None
+            return False
     
     async def stream_to_elevenlabs(self, text: str):
         """Stream text to ElevenLabs for TTS generation."""
@@ -525,12 +531,14 @@ class VoiceSession:
             # Create request queue for audio streaming
             self.speech_request_queue = asyncio.Queue()
             
-            # Start streaming recognition with corrected API call
+            # streaming_recognize returns an async iterator
+            # We store it for use in receive_google_transcripts
             self.speech_stream = self.speech_client.streaming_recognize(
                 requests=self._audio_request_generator()
             )
             
             # Start receiving transcripts in background
+            # The task will iterate over the speech_stream async iterator
             self.speech_receiver_task = asyncio.create_task(self.receive_google_transcripts())
             
             # Start VAD monitoring
@@ -575,6 +583,7 @@ class VoiceSession:
     async def receive_google_transcripts(self):
         """Receive and process transcripts from Google Speech V2."""
         try:
+            # Iterate directly over the async iterator returned by streaming_recognize
             async for response in self.speech_stream:
                 if not self.session_active:
                     break
@@ -590,6 +599,8 @@ class VoiceSession:
                     language_code = result.language_code if result.language_code else "cs"
                     language = language_code.split("-")[0]  # sk-SK -> sk
                     
+                    # LOG: Every received transcript (both interim and final)
+                    logger.info(f"🎤 Google STT {'[FINAL]' if is_final else '[interim]'} ({language}): {transcript}")
                     logger.debug(f"📝 Transcript ({'final' if is_final else 'interim'}): {transcript}")
                     
                     if is_final:
@@ -680,11 +691,17 @@ class VoiceSession:
                 "is_final": False
             })
             
-            # Connect to ElevenLabs
-            await self.connect_elevenlabs()
+            # Connect to ElevenLabs and wait for stable connection
+            logger.info("⏳ Waiting for ElevenLabs WebSocket to be ready...")
+            connected = await self.connect_elevenlabs()
             
-            # Wait a moment for connection
-            await asyncio.sleep(0.1)
+            if not connected:
+                logger.error("❌ Failed to connect to ElevenLabs, greeting aborted")
+                return
+            
+            # Additional wait to ensure WebSocket is fully stable
+            await asyncio.sleep(0.5)
+            logger.info("✅ ElevenLabs connection stable, sending greeting...")
             
             # Send greeting to TTS
             normalized_greeting = normalize_text(greeting_text)

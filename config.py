@@ -138,8 +138,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", "meta-llama/llama-3.1-70b-instruct")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # ElevenLabs Configuration (Flash v2.5 for ultra-low latency)
-# Using Adam voice (pNInz6obpg8ndclK7Ab3) - stable with Flash model
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "pNInz6obpg8ndclK7Ab3")  # Adam
+# Using Rachel voice (21m00Tcm4TlvDq8ikWAM) - default ElevenLabs voice, always works
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel
 ELEVENLABS_MODEL = "eleven_flash_v2_5"  # Ultra-fast model for real-time streaming
 ELEVENLABS_OPTIMIZE_LATENCY = 4  # Maximum streaming optimization
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&optimize_streaming_latency={latency}"
